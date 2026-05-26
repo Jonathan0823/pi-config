@@ -25,7 +25,7 @@
   },
   "enableSkillCommands": true,
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.4-mini",
-  "defaultThinkingLevel": "off",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "high",
   "lastChangelogVersion": "0.75.5"
 }
