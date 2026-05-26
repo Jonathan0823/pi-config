@@ -1,0 +1,24 @@
+{
+  "theme": "dark",
+  "quietStartup": true,
+  "enableInstallTelemetry": false,
+  "hideThinkingBlock": true,
+  "doubleEscapeAction": "tree",
+  "treeFilterMode": "default",
+  "editorPaddingX": 0,
+  "autocompleteMaxVisible": 5,
+  "showHardwareCursor": false,
+  "steeringMode": "one-at-a-time",
+  "followUpMode": "one-at-a-time",
+  "transport": "auto",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3
+  },
+  "enableSkillCommands": true
+}

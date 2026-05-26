@@ -1,0 +1,11 @@
+.tmp/
+sessions/
+auth.json
+.secrets/
+node_modules/
+*.log
+*.bak
+*.swp
+*.swo
+.DS_Store
+*.orig
