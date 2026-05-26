@@ -1,5 +1,4 @@
 ---
-name: pr-writing
 description: Write concise, review-ready pull requests with clear scope, testing, and reviewer guidance
 license: MIT
 compatibility: opencode
@@ -25,33 +24,43 @@ metadata:
 - Announce ownership when starting work.
 - Clarify scope before implementation.
 
-### 2) Keep scope small
+### 2) Gather repo context before drafting
+
+- Inspect `git status -sb`, `git branch -vv`, `git remote -v`, and `git diff --stat`.
+- Check `gh repo view` if `gh` is available and a remote exists.
+- Look for PR templates/guidelines in `.github/PULL_REQUEST_TEMPLATE*`, `.github/pull_request_template*`, `CONTRIBUTING.md`, and `README.md`.
+
+If the remote is missing or gh is unavailable, say what was checked and fall back to git-derived context instead of guessing.
+
+### 3) Keep scope small
 
 - Fix one problem per PR.
 - Avoid bundling unrelated changes.
 - Split larger work into logical commits.
 
-### 3) Keep changes clean
+### 4) Keep changes clean
 
 - Follow project lint/style rules.
 - Preserve existing architecture and patterns.
 - Remove dead code and noisy changes.
 
-### 4) Test before opening
+### 5) Test before opening
 
 - State what you tested (manual + automated).
 - Mention environments used.
 - Call out known gaps or deferred tests.
 
-### 5) Write the summary for reviewers
+### 6) Write the summary for reviewers
 
 Include:
 
 - Related issue/context
 - What changed and why
 - How it was tested
-- What reviewers should focus on
-- Notes/risks/migrations (if any)
+- Reviewer focus
+- Risks/migrations
+- Out-of-scope items
+- Target repo/base branch when known
 
 ## PR Body Template
 

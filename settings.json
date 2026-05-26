@@ -2,7 +2,7 @@
   "theme": "dark",
   "quietStartup": true,
   "enableInstallTelemetry": false,
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "doubleEscapeAction": "tree",
   "treeFilterMode": "default",
   "editorPaddingX": 0,
@@ -11,7 +11,9 @@
   "steeringMode": "one-at-a-time",
   "followUpMode": "one-at-a-time",
   "transport": "auto",
-  "packages": ["npm:context-mode"],
+  "packages": [
+    "npm:context-mode"
+  ],
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
@@ -21,5 +23,9 @@
     "enabled": true,
     "maxRetries": 3
   },
-  "enableSkillCommands": true
+  "enableSkillCommands": true,
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.4-mini",
+  "defaultThinkingLevel": "off",
+  "lastChangelogVersion": "0.75.5"
 }

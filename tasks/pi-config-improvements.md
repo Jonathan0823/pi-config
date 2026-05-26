@@ -20,38 +20,26 @@
 - Use MCP only where it clearly improves docs/context handling.
 
 ## Plan
-1. Audit the current config surface (`settings.json`, `AGENTS.md`, `APPEND_SYSTEM.md`, `prompts/`, `extensions/`) and note duplication or missing pieces.
+1. Tighten the git commit prompt and skill so they always inspect the diff and repo state before drafting messages.
    - Dependency: none
-   - Verify: list of concrete issues/opportunities is captured in this task file.
-2. Make `AGENTS.md` the canonical workflow file and reduce overlap in `APPEND_SYSTEM.md`.
+   - Verify: the prompt/skill ask the model to discover repo context first and output conventional commit drafts.
+2. Tighten the PR prompt and skill so they inspect remote/template context before asking for missing details.
    - Dependency: step 1
-   - Verify: only one clear source of workflow truth remains.
-3. Check whether Context7 MCP is actually supported by Pi config; add it only if the settings surface supports it.
-   - Dependency: step 1
-   - Verify: support status is recorded and the smallest useful setup is chosen.
-4. Add `context-mode` for Pi support, context protection, and session continuity.
-   - Dependency: step 1
-   - Verify: package + MCP config are in place and the rationale is documented.
-5. Add a `tasks/` starter/template file so future work follows the same source-of-truth flow.
+   - Verify: the prompt/skill look up remote, default branch, GH repo info, and PR templates before drafting.
+3. Decide whether the default model should change for higher-quality git/PR drafting.
    - Dependency: steps 1-2
-   - Verify: template exists and matches the task-first workflow.
-6. Keep the risky-command guard, and tune it only if it improves safety without blocking normal work.
-   - Dependency: step 1
-   - Verify: guard remains balanced and predictable.
-7. Final pass: check token overhead, instruction clarity, and alignment with medium autonomy.
-   - Dependency: steps 2-6
-   - Verify: config is simpler and ready for use.
+   - Verify: either the config is updated or the decision is documented here.
+4. Run a final consistency pass on the task file and affected config files.
+   - Dependency: steps 1-3
+   - Verify: the repo instructions remain concise and aligned with medium autonomy.
 
 ## Checklist
 - [x] Audit current config files and record findings.
-- [x] Consolidate workflow instructions so `AGENTS.md` is the primary source.
-- [x] Reduce or reframe `APPEND_SYSTEM.md` if it duplicates content.
-- [x] Confirm or document the Context7 MCP support status.
-- [x] Decide whether `context-mode` is worth adding.
-- [x] Add `context-mode` package and MCP config.
-- [x] Create a `tasks/` starter/template file for future work.
-- [x] Preserve the risky-command guard and only adjust if necessary.
-- [x] Validate the final config for clarity, token overhead, and medium autonomy.
+- [x] Capture the git/PR workflow weakness in this task file.
+- [x] Tighten the commit and PR prompt templates.
+- [x] Tighten the matching git-commit and pr-writing skills.
+- [x] Decide whether the default model should change.
+- [x] Validate the final config for clarity and behavior.
 
 ## Risks
 - Adding too many instructions can increase token usage and reduce clarity.
@@ -79,3 +67,6 @@
 - Pause before any code/config edits until this task is approved.
 - Context-mode is now included as the package + MCP pair needed for Pi.
 - The implementation stays minimal: one package entry plus one MCP server entry.
+- Review finding: the main weakness is git/PR prompting, not the base Pi shell config.
+- Review finding: `prompts/commit.md` and `prompts/pr.md` were too thin; they now force repo discovery (`git remote -v`, `git branch -vv`, `gh repo view`, template lookup) before asking the user for missing info.
+- Decision: keep the default model unchanged for now; the prompt/skill fixes were the high-impact change, and a model bump should wait for a known-good replacement.
