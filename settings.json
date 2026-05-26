@@ -11,6 +11,7 @@
   "steeringMode": "one-at-a-time",
   "followUpMode": "one-at-a-time",
   "transport": "auto",
+  "packages": ["npm:context-mode"],
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,

@@ -2,6 +2,7 @@
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
-    "keepRecentTokens": 24000
-  }
+    "keepRecentTokens": 20000
+  },
+  "enableSkillCommands": true
 }

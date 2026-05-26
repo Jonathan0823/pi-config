@@ -11,3 +11,4 @@ Copy this into a new repo when you want the same task-first workflow there.
 ## Workflow
 
 Create or update `tasks/<name>.md` before implementation. Keep it current as the work changes.
+Use `AGENTS.md` as the source of truth for workflow rules.

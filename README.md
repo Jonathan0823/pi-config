@@ -25,18 +25,28 @@ Or sync from an existing clone:
 ./install.sh ~/.pi/agent
 ```
 
+Then install the context-mode package and restart Pi:
+
+```bash
+pi install npm:context-mode
+```
+
 ## Notes
 
 - Choose the model manually with `/model` or `Ctrl+L`.
 - Keep active work in `tasks/<name>.md` inside each project.
+- Start new tasks from `tasks/TASK_TEMPLATE.md`.
+- `AGENTS.md` is the canonical workflow file.
+- `APPEND_SYSTEM.md` is a legacy minimal override.
 - The repo intentionally avoids tracking secrets, sessions, and auth files.
 
 ## Layout
 
 - `settings.json` — global Pi settings
-- `AGENTS.md` — global workflow guidance
-- `APPEND_SYSTEM.md` — extra system instructions
+- `mcp.json` — MCP server config (context-mode)
+- `AGENTS.md` — canonical workflow guidance
+- `APPEND_SYSTEM.md` — legacy minimal override
+- `tasks/` — active task files and `TASK_TEMPLATE.md`
 - `prompts/` — reusable slash commands
-- `skills/` — reusable capabilities
 - `extensions/` — local TypeScript extensions
 - `project-template/` — files to copy into new projects
