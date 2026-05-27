@@ -31,10 +31,9 @@ interface TaskState {
 const TASKS_DIR = "tasks";
 const CURRENT_FILE = ".taskflow-current";
 const STATE_FILE = "state.json";
-const TASK_DIR_RE = /^\d{3}-[a-z0-9][a-z0-9-]*$/;
 
 const TaskflowParams = Type.Object({
-  action: StringEnum(["status", "next", "done", "approve", "branch", "pr_context"] as const),
+  action: StringEnum(["status", "next", "run", "done", "approve", "branch", "pr_context"] as const),
   id: Type.Optional(Type.String({ description: "Task id for done, e.g. T001" })),
   note: Type.Optional(Type.String({ description: "Optional note for task completion" })),
 });
@@ -54,6 +53,41 @@ function slugify(input: string): string {
 function branchNameFromTaskDir(taskDir: string): string {
   const base = taskDir.split("/").pop() ?? taskDir;
   return `feat/${base.replace(/^\d{3}-/, "")}`;
+}
+
+function taskNumberFromDir(taskDir: string): string {
+  const base = taskDir.split("/").pop() ?? taskDir;
+  return base.match(/^(\d{3})-/)?.[1] ?? base;
+}
+
+async function resolveTaskDirRef(cwd: string, ref: string): Promise<string | undefined> {
+  const raw = ref.trim().replace(/^@/, "");
+  if (!raw) return undefined;
+
+  const normalized = raw.replace(/\\/g, "/").replace(/^\.\/+/, "");
+  const directCandidates = [normalized, `${TASKS_DIR}/${normalized}`];
+  for (const candidate of directCandidates) {
+    const statePath = resolve(cwd, candidate, STATE_FILE);
+    if (await exists(statePath)) return candidate;
+  }
+
+  const base = normalized.split("/").pop() ?? normalized;
+  if (!/^\d{3}$/.test(base)) return undefined;
+
+  const tasksPath = resolve(cwd, TASKS_DIR);
+  if (!(await exists(tasksPath))) return undefined;
+
+  const entries = await readdir(tasksPath, { withFileTypes: true });
+  const matches = entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(`${base}-`))
+    .map((entry) => entry.name);
+
+  if (matches.length === 1) return `${TASKS_DIR}/${matches[0]}`;
+  if (matches.length > 1) {
+    throw new Error(`Task number ${base} is ambiguous: ${matches.join(", ")}`);
+  }
+
+  return undefined;
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -94,8 +128,8 @@ async function getCurrentTaskDir(cwd: string): Promise<string | undefined> {
   return value || undefined;
 }
 
-async function loadState(cwd: string, taskDir?: string): Promise<TaskState | undefined> {
-  const dir = taskDir ?? (await getCurrentTaskDir(cwd));
+async function loadState(cwd: string, taskRef?: string): Promise<TaskState | undefined> {
+  const dir = taskRef ? await resolveTaskDirRef(cwd, taskRef) : await getCurrentTaskDir(cwd);
   if (!dir) return undefined;
 
   const statePath = resolve(cwd, dir, STATE_FILE);
@@ -162,7 +196,8 @@ function formatState(state: TaskState): string {
   const total = state.tasks.length;
   const next = nextItems(state, 3);
   return [
-    `Task: ${state.name}`,
+    `Task #: ${taskNumberFromDir(state.taskDir)}`,
+    `Name: ${state.name}`,
     `Dir: ${state.taskDir}`,
     `Phase: ${state.phase}${state.planApproved ? " (approved)" : ""}`,
     `Branch: ${state.branch}`,
@@ -176,7 +211,16 @@ function formatState(state: TaskState): string {
 function compactContext(state: TaskState): string {
   const next = nextItems(state, 3).map((task) => `- ${task.id}: ${task.title}`).join("\n") || "- none";
   const done = state.tasks.filter((task) => task.status === "done").length;
-  return `[TASKFLOW]\nTask: ${state.name}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nNext steps:\n${next}\n\nRules:\n- Execute the current plan; do not rewrite spec/plan/tasks during implementation unless the user explicitly asks.\n- Use the taskflow tool or /task-done to mark completed task ids.\n- Keep responses focused on the next step and validation.`;
+  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nNext steps:\n${next}\n\nRules:\n- Use /task-run when you want the whole task completed end-to-end.\n- Use /task-next only for a single slice.\n- Do not rewrite spec/plan/tasks during implementation unless the user explicitly asks.\n- Use the taskflow tool or /task-done to mark completed task ids.`;
+}
+
+function autonomousContext(state: TaskState): string {
+  const done = state.tasks.filter((task) => task.status === "done").length;
+  const remaining = state.tasks.filter((task) => task.status !== "done");
+  const worklist = remaining.length
+    ? remaining.map((task) => `- ${task.id}: ${task.title} [${task.status}]`).join("\n")
+    : "- none";
+  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nRemaining work:\n${worklist}\n\nRules:\n- Execute the task end-to-end, not slice-by-slice.\n- Use ${state.taskDir}/tasks.md as the source of truth.\n- Use the taskflow tool or /task-done to mark each finished task id as you complete it.\n- Keep going until all items are done, then validate and summarize the result.`;
 }
 
 async function createTask(cwd: string, rawName: string): Promise<TaskState> {
@@ -257,10 +301,10 @@ export default function taskflow(pi: ExtensionAPI) {
     name: "taskflow",
     label: "Taskflow",
     description: "Read or update the current spec-driven task state without loading full task files.",
-    promptSnippet: "Manage compact spec-driven task state: status, next, done, approve, branch, or PR context.",
+    promptSnippet: "Manage compact spec-driven task state plus autonomous end-to-end runs.",
     promptGuidelines: [
       "Use taskflow to read or update task progress instead of rewriting task markdown during implementation.",
-      "Use taskflow action next before implementation work when a current task exists.",
+      "Use taskflow action run for end-to-end execution and taskflow action next only for a single slice.",
       "Use taskflow action done after completing a stable task id.",
     ],
     parameters: TaskflowParams,
@@ -280,6 +324,13 @@ export default function taskflow(pi: ExtensionAPI) {
 
       if (params.action === "next") {
         return { content: [{ type: "text", text: compactContext(state) }], details: { next: nextItems(state) } };
+      }
+
+      if (params.action === "run") {
+        if (!state.planApproved) {
+          return { content: [{ type: "text", text: "Approve the task first with /task-approve." }], details: { approved: false } };
+        }
+        return { content: [{ type: "text", text: autonomousContext(state) }], details: { run: state.tasks } };
       }
 
       if (params.action === "branch") {
@@ -306,27 +357,27 @@ export default function taskflow(pi: ExtensionAPI) {
         return;
       }
       const state = await createTask(ctx.cwd, name);
-      pi.setSessionName(state.name);
+      pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Created taskflow task.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
       ctx.ui.setEditorText(`Fill the spec for ${state.taskDir}/spec.md. Ask up to 3 clarifying questions if needed. Do not implement yet.`);
     },
   });
 
   pi.registerCommand("task-current", {
-    description: "Set current task directory (usage: /task-current tasks/001-name)",
+    description: "Set current task by number or path (usage: /task-current 001)",
     handler: async (args, ctx) => {
-      const taskDir = args.trim();
-      if (!TASK_DIR_RE.test(taskDir.split("/").pop() ?? "")) {
-        ctx.ui.notify("Usage: /task-current tasks/001-name", "warning");
+      const taskRef = args.trim();
+      if (!taskRef) {
+        ctx.ui.notify("Usage: /task-current 001", "warning");
         return;
       }
-      const state = await loadState(ctx.cwd, taskDir);
+      const state = await loadState(ctx.cwd, taskRef);
       if (!state) {
-        ctx.ui.notify(`No state found for ${taskDir}`, "error");
+        ctx.ui.notify(`No state found for ${taskRef}`, "error");
         return;
       }
-      await setCurrentTask(ctx.cwd, taskDir);
-      pi.setSessionName(state.name);
+      await setCurrentTask(ctx.cwd, state.taskDir);
+      pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Current task set.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
     },
   });
@@ -373,6 +424,18 @@ export default function taskflow(pi: ExtensionAPI) {
       }
       const prompt = `Implement ${next.id}: ${next.title}\n\nUse ${state.taskDir} as source of truth. Do not rewrite the plan. Validate the change, then mark ${next.id} done with taskflow.`;
       pi.sendMessage({ customType: "taskflow", content: compactContext(state), display: true }, { triggerTurn: false });
+      ctx.ui.setEditorText(prompt);
+    },
+  });
+
+  pi.registerCommand("task-run", {
+    description: "Prepare an end-to-end implementation prompt for the full task",
+    handler: async (_args, ctx) => {
+      const state = await loadState(ctx.cwd);
+      if (!state) return ctx.ui.notify("No current taskflow task.", "error");
+      if (!state.planApproved) return ctx.ui.notify("Approve the task first with /task-approve.", "warning");
+      const prompt = `Complete ${state.name} end-to-end using ${state.taskDir} as the source of truth.\n\nWork through the remaining checklist items without stopping after each slice. Read the task file, make the required code/config changes, validate the result, and use taskflow /task-done for each completed task id as you finish it. When everything is done, summarize the outcome for review.`;
+      pi.sendMessage({ customType: "taskflow", content: autonomousContext(state), display: true }, { triggerTurn: false });
       ctx.ui.setEditorText(prompt);
     },
   });
@@ -445,7 +508,7 @@ export default function taskflow(pi: ExtensionAPI) {
 
     const ok = await ctx.ui.confirm(
       "Revise approved task?",
-      `Taskflow is in implementation mode. Allow editing ${path}?\n\nPrefer executing the next task instead of rewriting the plan.`,
+      `Taskflow is in implementation mode. Allow editing ${path}?\n\nPrefer executing the current task instead of rewriting the plan.`,
     );
     if (!ok) {
       return { block: true, reason: "Taskflow blocked approved task rewrite. Use /task-revise to reopen planning." };

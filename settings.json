@@ -12,7 +12,8 @@
   "followUpMode": "one-at-a-time",
   "transport": "auto",
   "packages": [
-    "npm:context-mode"
+    "npm:context-mode",
+    "npm:pi-web-access"
   ],
   "compaction": {
     "enabled": true,
@@ -25,7 +26,7 @@
   },
   "enableSkillCommands": true,
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "high",
+  "defaultModel": "gpt-5.4-mini",
+  "defaultThinkingLevel": "off",
   "lastChangelogVersion": "0.75.5"
 }
