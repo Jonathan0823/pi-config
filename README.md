@@ -16,7 +16,7 @@ This repository is a portable Pi setup you can clone to other devices.
 Clone or sync this repo to `~/.pi/agent`.
 
 ```bash
-git clone <repo-url> ~/.pi/agent
+git clone https://github.com/Jonathan0823/pi-config ~/.pi/agent
 ```
 
 Or sync from an existing clone:
