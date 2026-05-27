@@ -25,10 +25,11 @@ Or sync from an existing clone:
 ./install.sh ~/.pi/agent
 ```
 
-Then install the context-mode package and restart Pi:
+Then install the dependencies:
 
 ```bash
 pi install npm:context-mode
+pi install npm:pi-web-access
 ```
 
 ## Notes
