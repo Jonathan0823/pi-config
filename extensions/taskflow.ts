@@ -34,7 +34,7 @@ const STATE_FILE = "state.json";
 
 const TaskflowParams = Type.Object({
   action: StringEnum(["status", "next", "run", "done", "approve", "branch", "pr_context"] as const),
-  id: Type.Optional(Type.String({ description: "Task id for done, e.g. T001 or 001" })),
+  id: Type.Optional(Type.String({ description: "Task ids for done, e.g. T001 T002 or 001 002" })),
   note: Type.Optional(Type.String({ description: "Optional note for task completion" })),
 });
 
@@ -145,6 +145,41 @@ function normalizeTaskId(id?: string): string | undefined {
   return upper;
 }
 
+function isDoneTaskToken(token: string): boolean {
+  return /^(?:T\d{3,}|\d+)$/i.test(token);
+}
+
+interface ParsedDoneArgs {
+  ids: string[];
+  note?: string;
+}
+
+function parseTaskDoneArgs(input: string): ParsedDoneArgs {
+  const tokens = input
+    .trim()
+    .replace(/,/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const ids: string[] = [];
+  const noteTokens: string[] = [];
+  let readingIds = true;
+
+  for (const token of tokens) {
+    const cleaned = token.replace(/^[([{"'`]+|[)\]},.;:!]+$/g, "");
+    if (readingIds && isDoneTaskToken(cleaned)) {
+      const normalized = normalizeTaskId(cleaned);
+      if (normalized && !ids.includes(normalized)) ids.push(normalized);
+      continue;
+    }
+
+    readingIds = false;
+    noteTokens.push(token);
+  }
+
+  return { ids, note: noteTokens.join(" ").trim() || undefined };
+}
+
 async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState | undefined> {
   const statePath = resolve(cwd, taskDir, STATE_FILE);
   if (await exists(statePath)) {
@@ -211,12 +246,148 @@ function specTemplate(name: string): string {
   return `# ${name}\n\n## Objective\n- TBD\n\n## User stories\n- As a <user>, I want <capability>, so that <outcome>.\n\n## Scope\n### In scope\n- TBD\n\n### Out of scope\n- TBD\n\n## Requirements\n- TBD\n\n## Acceptance criteria\n- [ ] TBD\n\n## Open questions\n- TBD\n`;
 }
 
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sectionBody(markdown: string, heading: string): string {
+  const lines = markdown.split(/\r?\n/);
+  const startIndex = lines.findIndex((line) => new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`).test(line));
+  if (startIndex < 0) return "";
+
+  const body: string[] = [];
+  for (const line of lines.slice(startIndex + 1)) {
+    if (/^##\s+/.test(line)) break;
+    body.push(line);
+  }
+
+  return body.join("\n").trim();
+}
+
+function subsectionBody(markdown: string, parentHeading: string, childHeading: string): string {
+  const parent = sectionBody(markdown, parentHeading);
+  if (!parent) return "";
+
+  const lines = parent.split(/\r?\n/);
+  const startIndex = lines.findIndex((line) => new RegExp(`^###\\s+${escapeRegExp(childHeading)}\\s*$`).test(line));
+  if (startIndex < 0) return "";
+
+  const body: string[] = [];
+  for (const line of lines.slice(startIndex + 1)) {
+    if (/^###\s+/.test(line) || /^##\s+/.test(line)) break;
+    body.push(line);
+  }
+
+  return body.join("\n").trim();
+}
+
+function extractListItems(section: string): string[] {
+  return section
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .map((line) => line.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").replace(/^\[xX\]\s+/, ""))
+    .filter((line) => Boolean(line) && line !== "TBD");
+}
+
+function shortenText(text: string, max = 72): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1).trimEnd()}…`;
+}
+
 function planTemplate(name: string): string {
-  return `# ${name} Plan\n\n> Taskflow rule: after approval, execute this plan instead of rewriting it. Revise only with explicit user approval.\n\n## Approach\n- TBD\n\n## Dependencies\n- TBD\n\n## Implementation strategy\n1. TBD\n\n## Validation strategy\n- TBD\n\n## Risks\n- TBD\n`;
+  return `# ${name} Plan\n\n> Generated from the approved spec. Revise only if the spec changes.\n\n## Approach\n- TBD\n\n## Dependencies\n- TBD\n\n## Implementation strategy\n1. TBD\n\n## Validation strategy\n- TBD\n\n## Risks\n- TBD\n`;
 }
 
 function tasksTemplate(name: string): string {
-  return `# ${name} Tasks\n\n> Use stable task ids. Mark progress with \`/task-done T001\` (or bare \`001\`) or the \`taskflow\` tool.\n> Format: \`- [ ] T001 [P] Optional parallel marker and task text\`\n\n## Setup\n- [ ] T001 Confirm spec acceptance criteria and implementation plan\n\n## Implementation\n- [ ] T002 Implement the first focused slice\n\n## Validation\n- [ ] T003 Run relevant validation and record results\n`;
+  return `# ${name} Tasks\n\n> Generated from the approved spec. Use stable task ids and mark progress with \`/task-done T001\` (or bare \`001\`).\n> Format: \`- [ ] T001 [P] Optional parallel marker and task text\`\n\n## Setup\n- [ ] T001 Confirm spec acceptance criteria and implementation plan\n\n## Implementation\n- [ ] T002 Implement the first focused slice\n\n## Validation\n- [ ] T003 Run relevant validation and record results\n`;
+}
+
+function renderPlanFromSpec(name: string, specText: string): string {
+  const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
+  const inScope = extractListItems(subsectionBody(specText, "Scope", "In scope"));
+  const outOfScope = extractListItems(subsectionBody(specText, "Scope", "Out of scope"));
+  const requirements = extractListItems(sectionBody(specText, "Requirements"));
+  const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
+  const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
+
+  const dependencies = openQuestions.length
+    ? openQuestions.map((item) => `- Resolve: ${item}`)
+    : ["- No explicit dependencies listed in the spec."];
+
+  const implementationSteps = [
+    `Review the approved spec and confirm the objective: ${shortenText(objective)}`,
+    requirements.length ? `Implement the listed requirements: ${shortenText(requirements[0])}` : `Implement the in-scope behavior from the spec.`,
+    `Verify the acceptance criteria and keep out-of-scope items untouched.`,
+    `Run the relevant validation and polish any follow-up fixes.`,
+  ];
+
+  const validation = acceptance.length
+    ? acceptance.map((item) => `- Confirm ${item}`)
+    : ["- Confirm the implementation satisfies the approved spec.", "- Run the relevant lint/type/test checks."];
+
+  const risks = [
+    ...outOfScope.slice(0, 2).map((item) => `- Avoid pulling in out-of-scope work: ${item}`),
+    ...openQuestions.slice(0, 2).map((item) => `- Resolve or document any open question: ${item}`),
+  ];
+
+  return [
+    `# ${name} Plan`,
+    "",
+    "> Generated from the approved spec. Revise only if the spec changes.",
+    "",
+    "## Approach",
+    `- ${shortenText(objective)}`,
+    ...(inScope.length ? inScope.map((item) => `- In scope: ${item}`) : ["- In scope: implement the approved spec."]),
+    "",
+    "## Dependencies",
+    ...dependencies,
+    "",
+    "## Implementation strategy",
+    ...implementationSteps.map((step, index) => `${index + 1}. ${step}`),
+    "",
+    "## Validation strategy",
+    ...validation,
+    "",
+    "## Risks",
+    ...(risks.length ? risks : ["- Scope may need refinement if the approved spec is underspecified."]),
+    "",
+  ].join("\n");
+}
+
+function renderTasksFromSpec(name: string, specText: string): string {
+  const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
+  const requirements = extractListItems(sectionBody(specText, "Requirements"));
+  const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
+  const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
+  const workItems = requirements.length ? requirements : acceptance.length ? acceptance : [objective];
+
+  const tasks: string[] = [
+    `- [ ] T001 Confirm the approved spec and implementation approach`,
+  ];
+
+  workItems.forEach((item, index) => {
+    tasks.push(`- [ ] T${formatNumber(index + 2)} Implement: ${shortenText(item)}`);
+  });
+
+  const validationId = formatNumber(tasks.length + 1);
+  tasks.push(`- [ ] T${validationId} Validate the implementation and record results`);
+
+  if (openQuestions.length) {
+    const followUpId = formatNumber(tasks.length + 1);
+    tasks.push(`- [ ] T${followUpId} Resolve any open questions or document follow-up work`);
+  }
+
+  return [
+    `# ${name} Tasks`,
+    "",
+    "> Generated from the approved spec. Use stable task ids and mark progress with `taskflow` or `/task-done`.",
+    "> Format: `- [ ] T001 [P] Optional parallel marker and task text`",
+    "",
+    "## Implementation",
+    ...tasks,
+    "",
+  ].join("\n");
 }
 
 function parseTasks(markdown: string): TaskItem[] {
@@ -306,18 +477,30 @@ async function createTask(cwd: string, rawName: string): Promise<TaskState> {
   };
 
   await writeFile(join(absDir, "spec.md"), specTemplate(name), "utf8");
-  await writeFile(join(absDir, "plan.md"), planTemplate(name), "utf8");
-  await writeFile(join(absDir, "tasks.md"), tasksTemplate(name), "utf8");
   await saveState(cwd, state);
   await setCurrentTask(cwd, taskDir);
   return state;
 }
 
 async function approveTask(cwd: string, state: TaskState): Promise<TaskState> {
+  const specPath = resolve(cwd, state.taskDir, "spec.md");
+  const planPath = resolve(cwd, state.taskDir, "plan.md");
   const tasksPath = resolve(cwd, state.taskDir, "tasks.md");
-  const parsed = parseTasks(await readFile(tasksPath, "utf8"));
+  const specText = await readFile(specPath, "utf8");
+  const planText = renderPlanFromSpec(state.name, specText);
+  const tasksText = renderTasksFromSpec(state.name, specText);
+
+  await withFileMutationQueue(planPath, async () => {
+    await writeFile(planPath, planText, "utf8");
+  });
+
+  await withFileMutationQueue(tasksPath, async () => {
+    await writeFile(tasksPath, tasksText, "utf8");
+  });
+
+  const parsed = parseTasks(tasksText);
   if (parsed.length === 0) {
-    throw new Error(`No task rows found in ${relative(cwd, tasksPath)}. Use: - [ ] T001 Task text`);
+    throw new Error(`Generated no task rows for ${relative(cwd, tasksPath)}`);
   }
 
   state.tasks = parsed;
@@ -327,22 +510,79 @@ async function approveTask(cwd: string, state: TaskState): Promise<TaskState> {
   return state;
 }
 
-async function markDone(cwd: string, state: TaskState, id?: string, note?: string): Promise<TaskState> {
-  const targetId = normalizeTaskId(id) ?? nextItems(state, 1)[0]?.id;
-  if (!targetId) throw new Error("No pending task to mark done");
+interface MarkDoneResult {
+  state: TaskState;
+  requestedIds: string[];
+  completed: string[];
+  alreadyDone: string[];
+  missing: string[];
+}
 
-  const task = state.tasks.find((item) => item.id.toLowerCase() === targetId.toLowerCase());
-  if (!task) throw new Error(`Task not found: ${targetId}`);
+async function markDone(cwd: string, state: TaskState, ids?: string[], note?: string): Promise<MarkDoneResult> {
+  const requestedIds = ids?.length
+    ? [...new Set(ids.map((id) => normalizeTaskId(id)).filter((id): id is string => Boolean(id)))]
+    : nextItems(state, 1)
+        .map((item) => item.id)
+        .filter((id): id is string => Boolean(id));
 
-  task.status = "done";
-  if (note?.trim()) task.notes = [...(task.notes ?? []), note.trim()];
-  if (state.tasks.length > 0 && state.tasks.every((item) => item.status === "done")) {
-    state.phase = "review";
+  if (!requestedIds.length) throw new Error("No pending task to mark done");
+
+  const completed: string[] = [];
+  const alreadyDone: string[] = [];
+  const missing: string[] = [];
+  const noteText = note?.trim();
+  let changed = false;
+
+  for (const [index, targetId] of requestedIds.entries()) {
+    const task = state.tasks.find((item) => item.id.toLowerCase() === targetId.toLowerCase());
+    if (!task) {
+      missing.push(targetId);
+      continue;
+    }
+
+    if (task.status === "done") {
+      alreadyDone.push(targetId);
+      continue;
+    }
+
+    task.status = "done";
+    changed = true;
+    if (noteText && index === requestedIds.length - 1) {
+      task.notes = [...(task.notes ?? []), noteText];
+      changed = true;
+    }
+
+    await syncTaskCheckbox(cwd, state, task.id);
+    completed.push(task.id);
   }
 
-  await syncTaskCheckbox(cwd, state, task.id);
-  await saveState(cwd, state);
-  return state;
+  if (state.tasks.length > 0 && state.tasks.every((item) => item.status === "done") && state.phase !== "review") {
+    state.phase = "review";
+    changed = true;
+  }
+
+  if (changed) {
+    await saveState(cwd, state);
+  }
+
+  const fresh = await hydrateTaskState(cwd, state.taskDir);
+  return {
+    state: fresh ?? state,
+    requestedIds,
+    completed,
+    alreadyDone,
+    missing,
+  };
+}
+
+function formatDoneSummary(result: MarkDoneResult): string {
+  const lines = result.requestedIds.map((id) => {
+    if (result.completed.includes(id)) return `Marked ${id} done.`;
+    if (result.alreadyDone.includes(id)) return `Task ${id} was already done.`;
+    return `Task ${id} not found.`;
+  });
+
+  return lines.length ? lines.join("\n") : "No task ids supplied.";
 }
 
 function isProtectedTaskPath(cwd: string, filePath: string, state?: TaskState): boolean {
@@ -367,7 +607,8 @@ export default function taskflow(pi: ExtensionAPI) {
     promptGuidelines: [
       "Use taskflow to read or update task progress instead of rewriting task markdown during implementation.",
       "Use taskflow action run for end-to-end execution and taskflow action next only for a single slice.",
-      "Use taskflow action done after completing a stable task id.",
+      "Use taskflow action approve to generate the plan and task list from the approved spec.",
+      "Use taskflow action done after completing one or more stable task ids.",
     ],
     parameters: TaskflowParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -376,12 +617,14 @@ export default function taskflow(pi: ExtensionAPI) {
 
       if (params.action === "approve") {
         const approved = await approveTask(ctx.cwd, state);
-        return { content: [{ type: "text", text: `Approved task plan.\n\n${formatState(approved)}` }], details: approved };
+        return { content: [{ type: "text", text: `Generated plan and tasks from the approved spec.\n\n${formatState(approved)}` }], details: approved };
       }
 
       if (params.action === "done") {
-        const updated = await markDone(ctx.cwd, state, params.id, params.note);
-        return { content: [{ type: "text", text: `Marked done.\n\n${formatState(updated)}` }], details: updated };
+        const parsed = parseTaskDoneArgs(params.id ?? "");
+        const note = [parsed.note, params.note?.trim()].filter(Boolean).join(" ").trim() || undefined;
+        const result = await markDone(ctx.cwd, state, parsed.ids, note);
+        return { content: [{ type: "text", text: `${formatDoneSummary(result)}\n\n${formatState(result.state)}` }], details: result };
       }
 
       if (params.action === "next") {
@@ -411,7 +654,7 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-new", {
-    description: "Create a spec-driven task folder (usage: /task-new <feature-or-bug-name>)",
+    description: "Create a spec-first task folder (usage: /task-new <feature-or-bug-name>)",
     handler: async (args, ctx) => {
       const name = args.trim();
       if (!name) {
@@ -421,7 +664,7 @@ export default function taskflow(pi: ExtensionAPI) {
       const state = await createTask(ctx.cwd, name);
       pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Created taskflow task.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
-      ctx.ui.setEditorText(`Fill the spec for ${state.taskDir}/spec.md. Ask up to 3 clarifying questions if needed. Do not implement yet.`);
+      ctx.ui.setEditorText(`Fill only ${state.taskDir}/spec.md for now. Ask up to 3 clarifying questions if needed. Plan and tasks will be generated on /task-approve.`);
     },
   });
 
@@ -453,12 +696,12 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-approve", {
-    description: "Approve spec/plan/tasks and enter implementation mode",
+    description: "Generate plan/tasks from the approved spec and enter implementation mode",
     handler: async (_args, ctx) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       const approved = await approveTask(ctx.cwd, state);
-      pi.sendMessage({ customType: "taskflow", content: `Approved implementation plan.\n\n${formatState(approved)}`, display: true }, { triggerTurn: false });
+      pi.sendMessage({ customType: "taskflow", content: `Generated plan and tasks from the approved spec.\n\n${formatState(approved)}`, display: true }, { triggerTurn: false });
     },
   });
 
@@ -503,13 +746,13 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-done", {
-    description: "Mark a taskflow task done (usage: /task-done T001 [note] or /task-done 001 [note])",
+    description: "Mark taskflow tasks done (usage: /task-done T001 T002 [note] or /task-done 001 002 [note])",
     handler: async (args, ctx) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
-      const [id, ...rest] = args.trim().split(/\s+/).filter(Boolean);
-      const updated = await markDone(ctx.cwd, state, id, rest.join(" "));
-      pi.sendMessage({ customType: "taskflow", content: `Marked ${id ?? "next task"} done.\n\n${formatState(updated)}`, display: true }, { triggerTurn: false });
+      const parsed = parseTaskDoneArgs(args);
+      const result = await markDone(ctx.cwd, state, parsed.ids, parsed.note);
+      pi.sendMessage({ customType: "taskflow", content: `${formatDoneSummary(result)}\n\n${formatState(result.state)}`, display: true }, { triggerTurn: false });
     },
   });
 
