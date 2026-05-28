@@ -34,7 +34,7 @@ const STATE_FILE = "state.json";
 
 const TaskflowParams = Type.Object({
   action: StringEnum(["status", "next", "run", "done", "approve", "branch", "pr_context"] as const),
-  id: Type.Optional(Type.String({ description: "Task id for done, e.g. T001" })),
+  id: Type.Optional(Type.String({ description: "Task id for done, e.g. T001 or 001" })),
   note: Type.Optional(Type.String({ description: "Optional note for task completion" })),
 });
 
@@ -67,8 +67,7 @@ async function resolveTaskDirRef(cwd: string, ref: string): Promise<string | und
   const normalized = raw.replace(/\\/g, "/").replace(/^\.\/+/, "");
   const directCandidates = [normalized, `${TASKS_DIR}/${normalized}`];
   for (const candidate of directCandidates) {
-    const statePath = resolve(cwd, candidate, STATE_FILE);
-    if (await exists(statePath)) return candidate;
+    if (await isTaskDir(cwd, candidate)) return candidate;
   }
 
   const base = normalized.split("/").pop() ?? normalized;
@@ -99,6 +98,18 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+async function isTaskDir(cwd: string, taskDir: string): Promise<boolean> {
+  const absDir = resolve(cwd, taskDir);
+  if (!(await exists(absDir))) return false;
+
+  const required = [STATE_FILE, "tasks.md", "plan.md", "spec.md"];
+  for (const file of required) {
+    if (await exists(resolve(absDir, file))) return true;
+  }
+
+  return false;
+}
+
 async function nextTaskNumber(cwd: string): Promise<number> {
   const tasksPath = resolve(cwd, TASKS_DIR);
   if (!(await exists(tasksPath))) return 1;
@@ -113,6 +124,59 @@ async function nextTaskNumber(cwd: string): Promise<number> {
 
 function formatNumber(n: number): string {
   return String(n).padStart(3, "0");
+}
+
+function inferTaskName(taskDir: string, specText?: string): string {
+  const heading = specText?.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  if (heading) return heading;
+
+  const base = taskDir.split("/").pop() ?? taskDir;
+  const slug = base.replace(/^\d{3}-/, "").replace(/-/g, " ").trim();
+  return slug ? slug.replace(/\b\w/g, (char) => char.toUpperCase()) : base;
+}
+
+function normalizeTaskId(id?: string): string | undefined {
+  const raw = id?.trim();
+  if (!raw) return undefined;
+
+  const upper = raw.toUpperCase();
+  if (/^T\d{3,}$/.test(upper)) return upper;
+  if (/^\d+$/.test(upper)) return `T${upper.padStart(3, "0")}`;
+  return upper;
+}
+
+async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState | undefined> {
+  const statePath = resolve(cwd, taskDir, STATE_FILE);
+  if (await exists(statePath)) {
+    return JSON.parse(await readFile(statePath, "utf8")) as TaskState;
+  }
+
+  if (!(await isTaskDir(cwd, taskDir))) return undefined;
+
+  const specPath = resolve(cwd, taskDir, "spec.md");
+  const planPath = resolve(cwd, taskDir, "plan.md");
+  const tasksPath = resolve(cwd, taskDir, "tasks.md");
+  const [specText, planExists, tasksText] = await Promise.all([
+    (await exists(specPath)) ? readFile(specPath, "utf8") : Promise.resolve(""),
+    exists(planPath),
+    (await exists(tasksPath)) ? readFile(tasksPath, "utf8") : Promise.resolve(""),
+  ]);
+
+  const tasks = tasksText ? parseTasks(tasksText) : [];
+  const phase: Phase = tasks.length > 0 ? (tasks.every((task) => task.status === "done") ? "review" : "implement") : planExists ? "plan" : "spec";
+  const state: TaskState = {
+    version: 1,
+    name: inferTaskName(taskDir, specText || undefined),
+    taskDir,
+    phase,
+    branch: branchNameFromTaskDir(taskDir),
+    planApproved: tasks.length > 0,
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+    tasks,
+  };
+  await saveState(cwd, state);
+  return state;
 }
 
 async function setCurrentTask(cwd: string, taskDir: string): Promise<void> {
@@ -132,9 +196,7 @@ async function loadState(cwd: string, taskRef?: string): Promise<TaskState | und
   const dir = taskRef ? await resolveTaskDirRef(cwd, taskRef) : await getCurrentTaskDir(cwd);
   if (!dir) return undefined;
 
-  const statePath = resolve(cwd, dir, STATE_FILE);
-  if (!(await exists(statePath))) return undefined;
-  return JSON.parse(await readFile(statePath, "utf8")) as TaskState;
+  return hydrateTaskState(cwd, dir);
 }
 
 async function saveState(cwd: string, state: TaskState): Promise<void> {
@@ -154,7 +216,7 @@ function planTemplate(name: string): string {
 }
 
 function tasksTemplate(name: string): string {
-  return `# ${name} Tasks\n\n> Use stable task ids. Mark progress with \`/task-done T001\` or the \`taskflow\` tool.\n> Format: \`- [ ] T001 [P] Optional parallel marker and task text\`\n\n## Setup\n- [ ] T001 Confirm spec acceptance criteria and implementation plan\n\n## Implementation\n- [ ] T002 Implement the first focused slice\n\n## Validation\n- [ ] T003 Run relevant validation and record results\n`;
+  return `# ${name} Tasks\n\n> Use stable task ids. Mark progress with \`/task-done T001\` (or bare \`001\`) or the \`taskflow\` tool.\n> Format: \`- [ ] T001 [P] Optional parallel marker and task text\`\n\n## Setup\n- [ ] T001 Confirm spec acceptance criteria and implementation plan\n\n## Implementation\n- [ ] T002 Implement the first focused slice\n\n## Validation\n- [ ] T003 Run relevant validation and record results\n`;
 }
 
 function parseTasks(markdown: string): TaskItem[] {
@@ -266,7 +328,7 @@ async function approveTask(cwd: string, state: TaskState): Promise<TaskState> {
 }
 
 async function markDone(cwd: string, state: TaskState, id?: string, note?: string): Promise<TaskState> {
-  const targetId = id ?? nextItems(state, 1)[0]?.id;
+  const targetId = normalizeTaskId(id) ?? nextItems(state, 1)[0]?.id;
   if (!targetId) throw new Error("No pending task to mark done");
 
   const task = state.tasks.find((item) => item.id.toLowerCase() === targetId.toLowerCase());
@@ -441,7 +503,7 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-done", {
-    description: "Mark a taskflow task done (usage: /task-done T001 [note])",
+    description: "Mark a taskflow task done (usage: /task-done T001 [note] or /task-done 001 [note])",
     handler: async (args, ctx) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
