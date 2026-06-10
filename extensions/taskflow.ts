@@ -676,7 +676,7 @@ export default function taskflow(pi: ExtensionAPI) {
       const state = await createTask(ctx.cwd, name);
       pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Created taskflow task.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
-      ctx.ui.setEditorText(`Ask me clarifying questions for ${state.name} before drafting the spec. Do not edit files or fill ${state.taskDir}/spec.md yet. After I answer, write only ${state.taskDir}/spec.md. Include a \"Validation / tests\" section with the checks that prove this works. Plan and tasks will be generated on /task-approve.`);
+      ctx.ui.setEditorText(`Ask me clarifying questions for ${state.name} before drafting the spec. Do not edit files or fill ${state.taskDir}/spec.md yet. Do not create a separate tasks/<name>.md file. After I answer, write only ${state.taskDir}/spec.md. Include a \"Validation / tests\" section with the checks that prove this works. Plan and tasks will be generated on /task-approve.`);
     },
   });
 
