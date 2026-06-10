@@ -220,6 +220,13 @@ async function setCurrentTask(cwd: string, taskDir: string): Promise<void> {
   await writeFile(join(tasksPath, CURRENT_FILE), `${taskDir}\n`, "utf8");
 }
 
+async function clearCurrentTask(cwd: string): Promise<void> {
+  const currentPath = resolve(cwd, TASKS_DIR, CURRENT_FILE);
+  if (!(await exists(currentPath))) return;
+  const { unlink } = await import("node:fs/promises");
+  await unlink(currentPath);
+}
+
 async function getCurrentTaskDir(cwd: string): Promise<string | undefined> {
   const currentPath = resolve(cwd, TASKS_DIR, CURRENT_FILE);
   if (!(await exists(currentPath))) return undefined;
@@ -243,7 +250,7 @@ async function saveState(cwd: string, state: TaskState): Promise<void> {
 }
 
 function specTemplate(name: string): string {
-  return `# ${name}\n\n## Objective\n- TBD\n\n## User stories\n- As a <user>, I want <capability>, so that <outcome>.\n\n## Scope\n### In scope\n- TBD\n\n### Out of scope\n- TBD\n\n## Requirements\n- TBD\n\n## Acceptance criteria\n- [ ] TBD\n\n## Open questions\n- TBD\n`;
+  return `# ${name}\n\n## Objective\n- TBD\n\n## User stories\n- As a <user>, I want <capability>, so that <outcome>.\n\n## Scope\n### In scope\n- TBD\n\n### Out of scope\n- TBD\n\n## Requirements\n- TBD\n\n## Validation / tests\n- TBD\n\n## Acceptance criteria\n- [ ] TBD\n\n## Open questions\n- TBD\n`;
 }
 
 function escapeRegExp(input: string): string {
@@ -308,6 +315,7 @@ function renderPlanFromSpec(name: string, specText: string): string {
   const inScope = extractListItems(subsectionBody(specText, "Scope", "In scope"));
   const outOfScope = extractListItems(subsectionBody(specText, "Scope", "Out of scope"));
   const requirements = extractListItems(sectionBody(specText, "Requirements"));
+  const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
   const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
   const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
 
@@ -322,9 +330,11 @@ function renderPlanFromSpec(name: string, specText: string): string {
     `Run the relevant validation and polish any follow-up fixes.`,
   ];
 
-  const validation = acceptance.length
-    ? acceptance.map((item) => `- Confirm ${item}`)
-    : ["- Confirm the implementation satisfies the approved spec.", "- Run the relevant lint/type/test checks."];
+  const validation = validationTests.length
+    ? validationTests.map((item) => `- Validate ${item}`)
+    : acceptance.length
+      ? acceptance.map((item) => `- Confirm ${item}`)
+      : ["- Confirm the implementation satisfies the approved spec.", "- Run the relevant lint/type/test checks."];
 
   const risks = [
     ...outOfScope.slice(0, 2).map((item) => `- Avoid pulling in out-of-scope work: ${item}`),
@@ -358,6 +368,7 @@ function renderPlanFromSpec(name: string, specText: string): string {
 function renderTasksFromSpec(name: string, specText: string): string {
   const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
   const requirements = extractListItems(sectionBody(specText, "Requirements"));
+  const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
   const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
   const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
   const workItems = requirements.length ? requirements : acceptance.length ? acceptance : [objective];
@@ -370,8 +381,9 @@ function renderTasksFromSpec(name: string, specText: string): string {
     tasks.push(`- [ ] T${formatNumber(index + 2)} Implement: ${shortenText(item)}`);
   });
 
+  const validationSource = validationTests[0] ?? "the implementation and record results";
   const validationId = formatNumber(tasks.length + 1);
-  tasks.push(`- [ ] T${validationId} Validate the implementation and record results`);
+  tasks.push(`- [ ] T${validationId} Validate: ${shortenText(validationSource)}`);
 
   if (openQuestions.length) {
     const followUpId = formatNumber(tasks.length + 1);
@@ -664,7 +676,7 @@ export default function taskflow(pi: ExtensionAPI) {
       const state = await createTask(ctx.cwd, name);
       pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Created taskflow task.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
-      ctx.ui.setEditorText(`Fill only ${state.taskDir}/spec.md for now. Ask up to 3 clarifying questions if needed. Plan and tasks will be generated on /task-approve.`);
+      ctx.ui.setEditorText(`Ask me clarifying questions for ${state.name} before drafting the spec. Do not edit files or fill ${state.taskDir}/spec.md yet. After I answer, write only ${state.taskDir}/spec.md. Include a \"Validation / tests\" section with the checks that prove this works. Plan and tasks will be generated on /task-approve.`);
     },
   });
 
@@ -753,6 +765,17 @@ export default function taskflow(pi: ExtensionAPI) {
       const parsed = parseTaskDoneArgs(args);
       const result = await markDone(ctx.cwd, state, parsed.ids, parsed.note);
       pi.sendMessage({ customType: "taskflow", content: `${formatDoneSummary(result)}\n\n${formatState(result.state)}`, display: true }, { triggerTurn: false });
+    },
+  });
+
+  pi.registerCommand("task-detach", {
+    description: "Clear the current task and reset session to generic state",
+    handler: async (_args, ctx) => {
+      const state = await loadState(ctx.cwd);
+      if (!state) return ctx.ui.notify("No current taskflow task to detach from.", "warning");
+      await clearCurrentTask(ctx.cwd);
+      pi.setSessionName("");
+      pi.sendMessage({ customType: "taskflow", content: `Detached from task ${taskNumberFromDir(state.taskDir)} ${state.name}.\n\nTask folder preserved at ${state.taskDir}. Reattach anytime with /task-current ${taskNumberFromDir(state.taskDir)}.`, display: true }, { triggerTurn: false });
     },
   });
 
