@@ -14,7 +14,8 @@
   "packages": [
     "npm:context-mode",
     "npm:pi-web-access",
-    "npm:pi-kilocode"
+    "npm:pi-kilocode",
+    "npm:pi-memctx"
   ],
   "compaction": {
     "enabled": true,
