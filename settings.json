@@ -15,7 +15,7 @@
     "npm:context-mode",
     "npm:pi-web-access",
     "npm:pi-kilocode",
-    "npm:pi-memctx"
+    "npm:pi-simplify"
   ],
   "compaction": {
     "enabled": true,
