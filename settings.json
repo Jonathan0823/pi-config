@@ -15,7 +15,7 @@
     "npm:context-mode",
     "npm:pi-web-access",
     "npm:pi-kilocode",
-    "npm:pi-simplify"
+    "git:github.com/DietrichGebert/ponytail",
   ],
   "compaction": {
     "enabled": true,
