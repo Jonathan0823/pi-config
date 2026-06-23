@@ -45,11 +45,14 @@ async function resolveAgentsPath(cwd: string): Promise<string> {
 }
 
 function appendBlock(text: string): string {
-  const separator = text.endsWith("\n\n")
-    ? ""
-    : text.endsWith("\n")
-      ? "\n"
-      : "\n\n";
+  let separator: string;
+  if (text.endsWith("\n\n")) {
+    separator = "";
+  } else if (text.endsWith("\n")) {
+    separator = "\n";
+  } else {
+    separator = "\n\n";
+  }
   return `${text}${separator}${TEMPLATE_BLOCK}`;
 }
 

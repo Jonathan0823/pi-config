@@ -57,14 +57,14 @@ function branchNameFromTaskDir(taskDir: string): string {
 
 function taskNumberFromDir(taskDir: string): string {
   const base = taskDir.split("/").pop() ?? taskDir;
-  return base.match(/^(\d{3})-/)?.[1] ?? base;
+  return /^(\d{3})-/.exec(base)?.[1] ?? base;
 }
 
 async function resolveTaskDirRef(cwd: string, ref: string): Promise<string | undefined> {
   const raw = ref.trim().replace(/^@/, "");
   if (!raw) return undefined;
 
-  const normalized = raw.replace(/\\/g, "/").replace(/^\.\/+/, "");
+  const normalized = raw.replaceAll("\\", "/").replace(/^\.\/+/, "");
   const directCandidates = [normalized, `${TASKS_DIR}/${normalized}`];
   for (const candidate of directCandidates) {
     if (await isTaskDir(cwd, candidate)) return candidate;
@@ -131,7 +131,7 @@ function inferTaskName(taskDir: string, specText?: string): string {
   if (heading) return heading;
 
   const base = taskDir.split("/").pop() ?? taskDir;
-  const slug = base.replace(/^\d{3}-/, "").replace(/-/g, " ").trim();
+  const slug = base.replace(/^\d{3}-/, "").replaceAll("-", " ").trim();
   return slug ? slug.replace(/\b\w/g, (char) => char.toUpperCase()) : base;
 }
 
@@ -157,7 +157,7 @@ interface ParsedDoneArgs {
 function parseTaskDoneArgs(input: string): ParsedDoneArgs {
   const tokens = input
     .trim()
-    .replace(/,/g, " ")
+    .replaceAll(",", " ")
     .split(/\s+/)
     .filter(Boolean);
 
@@ -198,7 +198,12 @@ async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState
   ]);
 
   const tasks = tasksText ? parseTasks(tasksText) : [];
-  const phase: Phase = tasks.length > 0 ? (tasks.every((task) => task.status === "done") ? "review" : "implement") : planExists ? "plan" : "spec";
+  let phase: Phase;
+  if (tasks.length > 0) {
+    phase = tasks.every((task) => task.status === "done") ? "review" : "implement";
+  } else {
+    phase = planExists ? "plan" : "spec";
+  }
   const state: TaskState = {
     version: 1,
     name: inferTaskName(taskDir, specText || undefined),
@@ -254,12 +259,12 @@ function specTemplate(name: string): string {
 }
 
 function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return input.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 function sectionBody(markdown: string, heading: string): string {
   const lines = markdown.split(/\r?\n/);
-  const startIndex = lines.findIndex((line) => new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`).test(line));
+  const startIndex = lines.findIndex((line) => new RegExp(String.raw`^##\s+${escapeRegExp(heading)}\s*$`).test(line));
   if (startIndex < 0) return "";
 
   const body: string[] = [];
@@ -276,7 +281,7 @@ function subsectionBody(markdown: string, parentHeading: string, childHeading: s
   if (!parent) return "";
 
   const lines = parent.split(/\r?\n/);
-  const startIndex = lines.findIndex((line) => new RegExp(`^###\\s+${escapeRegExp(childHeading)}\\s*$`).test(line));
+  const startIndex = lines.findIndex((line) => new RegExp(String.raw`^###\s+${escapeRegExp(childHeading)}\s*$`).test(line));
   if (startIndex < 0) return "";
 
   const body: string[] = [];
@@ -330,11 +335,14 @@ function renderPlanFromSpec(name: string, specText: string): string {
     `Run the relevant validation and polish any follow-up fixes.`,
   ];
 
-  const validation = validationTests.length
-    ? validationTests.map((item) => `- Validate ${item}`)
-    : acceptance.length
-      ? acceptance.map((item) => `- Confirm ${item}`)
-      : ["- Confirm the implementation satisfies the approved spec.", "- Run the relevant lint/type/test checks."];
+  let validation: string[];
+  if (validationTests.length) {
+    validation = validationTests.map((item) => `- Validate ${item}`);
+  } else if (acceptance.length) {
+    validation = acceptance.map((item) => `- Confirm ${item}`);
+  } else {
+    validation = ["- Confirm the implementation satisfies the approved spec.", "- Run the relevant lint/type/test checks."];
+  }
 
   const risks = [
     ...outOfScope.slice(0, 2).map((item) => `- Avoid pulling in out-of-scope work: ${item}`),
@@ -371,7 +379,14 @@ function renderTasksFromSpec(name: string, specText: string): string {
   const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
   const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
   const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
-  const workItems = requirements.length ? requirements : acceptance.length ? acceptance : [objective];
+  let workItems: string[];
+  if (requirements.length) {
+    workItems = requirements;
+  } else if (acceptance.length) {
+    workItems = acceptance;
+  } else {
+    workItems = [objective];
+  }
 
   const tasks: string[] = [
     `- [ ] T001 Confirm the approved spec and implementation approach`,
@@ -424,8 +439,8 @@ async function syncTaskCheckbox(cwd: string, state: TaskState, id: string): Prom
 
   await withFileMutationQueue(tasksPath, async () => {
     const current = await readFile(tasksPath, "utf8");
-    const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const next = current.replace(new RegExp(`^- \\[ \\] ${escapedId} `, "m"), `- [x] ${id} `);
+    const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+    const next = current.replace(new RegExp(String.raw`^- \[ \] ${escapedId} `, "m"), String.raw`- [x] ${id} `);
     if (next !== current) await writeFile(tasksPath, next, "utf8");
   });
 }
@@ -561,7 +576,6 @@ async function markDone(cwd: string, state: TaskState, ids?: string[], note?: st
     changed = true;
     if (noteText && index === requestedIds.length - 1) {
       task.notes = [...(task.notes ?? []), noteText];
-      changed = true;
     }
 
     await syncTaskCheckbox(cwd, state, task.id);
@@ -600,7 +614,7 @@ function formatDoneSummary(result: MarkDoneResult): string {
 function isProtectedTaskPath(cwd: string, filePath: string, state?: TaskState): boolean {
   if (!state?.planApproved) return false;
   const abs = resolve(cwd, filePath.replace(/^@/, ""));
-  const rel = relative(cwd, abs).replace(/\\/g, "/");
+  const rel = relative(cwd, abs).replaceAll("\\", "/");
   if (!rel.startsWith(`${state.taskDir}/`)) return false;
   return rel.endsWith("/plan.md") || rel.endsWith("/tasks.md") || rel.endsWith("/spec.md");
 }
@@ -676,7 +690,7 @@ export default function taskflow(pi: ExtensionAPI) {
       const state = await createTask(ctx.cwd, name);
       pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Created taskflow task.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
-      ctx.ui.setEditorText(`Ask me clarifying questions for ${state.name} before drafting the spec. Do not edit files or fill ${state.taskDir}/spec.md yet. Do not create a separate tasks/<name>.md file. After I answer, write only ${state.taskDir}/spec.md. Include a \"Validation / tests\" section with the checks that prove this works. Plan and tasks will be generated on /task-approve.`);
+      ctx.ui.setEditorText(`Ask me clarifying questions for ${state.name} before drafting the spec. Do not edit files or fill ${state.taskDir}/spec.md yet. Do not create a separate tasks/<name>.md file. After I answer, write only ${state.taskDir}/spec.md. Include a "Validation / tests" section with the checks that prove this works. Plan and tasks will be generated on /task-approve.`);
     },
   });
 
