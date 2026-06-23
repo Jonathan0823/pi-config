@@ -11,7 +11,3 @@
 - Run safe validation (lint/typecheck/tests) without asking when it fits the change.
 - Ask before risky commands, destructive edits, or secret access.
 - Keep answers concise unless the user asks for detail.
-
-# context-mode is active
-
-Use `ctx_*` tools. The extension injects routing rules — follow them.
