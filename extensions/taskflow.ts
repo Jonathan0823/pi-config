@@ -232,6 +232,7 @@ async function hydrateFromFileInference(cwd: string, taskDir: string): Promise<T
     taskDir,
     phase,
     branch: branchNameFromTaskDir(taskDir),
+    workflowMode: "normal",
     planApproved: tasks.length > 0,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -402,6 +403,10 @@ function renderTasksFromPlan(name: string, planText: string): string {
 
   tasks.push(`- [ ] ${nextId()} Confirm the approved plan and implementation approach`);
 
+  if (dependencies.length) {
+    tasks.push(`- [ ] ${nextId()} Resolve dependency: ${shortenText(dependencies[0])}`);
+  }
+
   workItems.forEach((item) => {
     tasks.push(`- [ ] ${nextId()} Implement plan step: ${shortenText(item)}`);
   });
@@ -411,10 +416,6 @@ function renderTasksFromPlan(name: string, planText: string): string {
     tasks.push(`- [ ] ${nextId()} Validate: ${shortenText(validationStep)}`);
   } else {
     tasks.push(`- [ ] ${nextId()} Validate the implementation and record results`);
-  }
-
-  if (dependencies.length) {
-    tasks.push(`- [ ] ${nextId()} Resolve dependency: ${shortenText(dependencies[0])}`);
   }
 
   if (risks.length) {
