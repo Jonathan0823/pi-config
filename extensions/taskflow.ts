@@ -727,17 +727,23 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-new", {
-    description: "Create an interactive task intake flow (usage: /task-new <feature-or-bug-name>)",
+    description: "Create an interactive task intake flow",
     handler: async (args, ctx) => {
-      const name = args.trim();
-      if (!name) {
-        ctx.ui.notify("Usage: /task-new <feature-or-bug-name>", "warning");
-        return;
-      }
-
       const modeChoice = await ctx.ui.select("Choose task workflow mode", ["Normal feature", "Test-driven feature", "Grill me"]);
       if (!modeChoice) {
         ctx.ui.notify("Task creation cancelled.", "warning");
+        return;
+      }
+
+      const nameInput = await ctx.ui.input("Feature or bug name", args.trim() || "");
+      if (nameInput === undefined) {
+        ctx.ui.notify("Task creation cancelled.", "warning");
+        return;
+      }
+
+      const name = nameInput.trim();
+      if (!name) {
+        ctx.ui.notify("Task name is required.", "warning");
         return;
       }
 
