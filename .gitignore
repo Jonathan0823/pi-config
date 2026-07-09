@@ -14,3 +14,5 @@ npm/
 bin/
 cache/
 trust.json
+.pi/
+.scannerwork/
