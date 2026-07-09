@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 
-const AGENT_FILES = ["AGENTS.md", "agents.md"] as const;
+const AGENT_FILES = ["AGENTS.md"] as const;
 const TEMPLATE_BLOCK = `## context-mode is active
 Use \`ctx_*\` tools. The extension injects routing rules — follow them.
 `;
@@ -36,12 +36,7 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 async function resolveAgentsPath(cwd: string): Promise<string> {
-  for (const name of AGENT_FILES) {
-    const candidate = resolve(cwd, name);
-    if (await fileExists(candidate)) return candidate;
-  }
-
-  return resolve(cwd, AGENT_FILES[0]);
+  return resolve(cwd, "AGENTS.md");
 }
 
 function appendBlock(text: string): string {

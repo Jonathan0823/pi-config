@@ -7,6 +7,27 @@ import { Type } from "typebox";
 
 type Phase = "spec" | "plan" | "tasks" | "implement" | "review" | "done";
 type TaskStatus = "pending" | "in_progress" | "blocked" | "done";
+type TaskWorkflowMode = "normal" | "tdd" | "grill-me";
+
+type TaskDirEntry = {
+  name: string;
+  isDirectory(): boolean;
+};
+
+type TaskflowToolAction = "status" | "next" | "run" | "done" | "approve" | "branch" | "pr_context";
+
+type TaskflowToolParams = {
+  action: TaskflowToolAction;
+  id?: string;
+  note?: string;
+};
+
+type TaskflowToolCallEvent = {
+  toolName: string;
+  input: {
+    path?: unknown;
+  };
+};
 
 interface TaskItem {
   id: string;
@@ -17,20 +38,17 @@ interface TaskItem {
 }
 
 interface TaskState {
-  version: 1;
   name: string;
   taskDir: string;
   phase: Phase;
   branch: string;
+  workflowMode: TaskWorkflowMode;
   planApproved: boolean;
-  createdAt: string;
-  updatedAt: string;
   tasks: TaskItem[];
 }
 
 const TASKS_DIR = "tasks";
 const CURRENT_FILE = ".taskflow-current";
-const STATE_FILE = "state.json";
 
 const TaskflowParams = Type.Object({
   action: StringEnum(["status", "next", "run", "done", "approve", "branch", "pr_context"] as const),
@@ -38,9 +56,7 @@ const TaskflowParams = Type.Object({
   note: Type.Optional(Type.String({ description: "Optional note for task completion" })),
 });
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
+
 
 function slugify(input: string): string {
   return input
@@ -76,7 +92,7 @@ async function resolveTaskDirRef(cwd: string, ref: string): Promise<string | und
   const tasksPath = resolve(cwd, TASKS_DIR);
   if (!(await exists(tasksPath))) return undefined;
 
-  const entries = await readdir(tasksPath, { withFileTypes: true });
+  const entries: TaskDirEntry[] = await readdir(tasksPath, { withFileTypes: true });
   const matches = entries
     .filter((entry) => entry.isDirectory() && entry.name.startsWith(`${base}-`))
     .map((entry) => entry.name);
@@ -102,7 +118,7 @@ async function isTaskDir(cwd: string, taskDir: string): Promise<boolean> {
   const absDir = resolve(cwd, taskDir);
   if (!(await exists(absDir))) return false;
 
-  const required = [STATE_FILE, "tasks.md", "plan.md", "spec.md"];
+  const required = ["tasks.md", "plan.md", "spec.md"];
   for (const file of required) {
     if (await exists(resolve(absDir, file))) return true;
   }
@@ -114,7 +130,7 @@ async function nextTaskNumber(cwd: string): Promise<number> {
   const tasksPath = resolve(cwd, TASKS_DIR);
   if (!(await exists(tasksPath))) return 1;
 
-  const entries = await readdir(tasksPath, { withFileTypes: true });
+  const entries: TaskDirEntry[] = await readdir(tasksPath, { withFileTypes: true });
   const nums = entries
     .filter((entry) => entry.isDirectory() && /^\d{3}-/.test(entry.name))
     .map((entry) => Number(entry.name.slice(0, 3)))
@@ -181,11 +197,6 @@ function parseTaskDoneArgs(input: string): ParsedDoneArgs {
 }
 
 async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState | undefined> {
-  const statePath = resolve(cwd, taskDir, STATE_FILE);
-  if (await exists(statePath)) {
-    return JSON.parse(await readFile(statePath, "utf8")) as TaskState;
-  }
-
   if (!(await isTaskDir(cwd, taskDir))) return undefined;
 
   const specPath = resolve(cwd, taskDir, "spec.md");
@@ -204,19 +215,23 @@ async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState
   } else {
     phase = planExists ? "plan" : "spec";
   }
-  const state: TaskState = {
-    version: 1,
+
+  let workflowMode: TaskWorkflowMode = "normal";
+  if (specText.includes("<!-- workflowMode: tdd -->")) {
+    workflowMode = "tdd";
+  } else if (specText.includes("<!-- workflowMode: grill-me -->")) {
+    workflowMode = "grill-me";
+  }
+
+  return {
     name: inferTaskName(taskDir, specText || undefined),
     taskDir,
     phase,
     branch: branchNameFromTaskDir(taskDir),
+    workflowMode,
     planApproved: tasks.length > 0,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
     tasks,
   };
-  await saveState(cwd, state);
-  return state;
 }
 
 async function setCurrentTask(cwd: string, taskDir: string): Promise<void> {
@@ -246,16 +261,8 @@ async function loadState(cwd: string, taskRef?: string): Promise<TaskState | und
   return hydrateTaskState(cwd, dir);
 }
 
-async function saveState(cwd: string, state: TaskState): Promise<void> {
-  state.updatedAt = nowIso();
-  const statePath = resolve(cwd, state.taskDir, STATE_FILE);
-  await withFileMutationQueue(statePath, async () => {
-    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-  });
-}
-
-function specTemplate(name: string): string {
-  return `# ${name}\n\n## Objective\n- TBD\n\n## User stories\n- As a <user>, I want <capability>, so that <outcome>.\n\n## Scope\n### In scope\n- TBD\n\n### Out of scope\n- TBD\n\n## Requirements\n- TBD\n\n## Validation / tests\n- TBD\n\n## Acceptance criteria\n- [ ] TBD\n\n## Open questions\n- TBD\n`;
+function specTemplate(name: string, modeComment = ""): string {
+  return `${modeComment}# ${name}\n\n## Objective\n- TBD\n\n## User stories\n- As a <user>, I want <capability>, so that <outcome>.\n\n## Scope\n### In scope\n- TBD\n\n### Out of scope\n- TBD\n\n## Requirements\n- TBD\n\n## Test cases\n- TBD\n\n## Validation / tests\n- TBD\n\n## Acceptance criteria\n- [ ] TBD\n\n## Open questions\n- TBD\n`;
 }
 
 function escapeRegExp(input: string): string {
@@ -276,23 +283,6 @@ function sectionBody(markdown: string, heading: string): string {
   return body.join("\n").trim();
 }
 
-function subsectionBody(markdown: string, parentHeading: string, childHeading: string): string {
-  const parent = sectionBody(markdown, parentHeading);
-  if (!parent) return "";
-
-  const lines = parent.split(/\r?\n/);
-  const startIndex = lines.findIndex((line) => new RegExp(String.raw`^###\s+${escapeRegExp(childHeading)}\s*$`).test(line));
-  if (startIndex < 0) return "";
-
-  const body: string[] = [];
-  for (const line of lines.slice(startIndex + 1)) {
-    if (/^###\s+/.test(line) || /^##\s+/.test(line)) break;
-    body.push(line);
-  }
-
-  return body.join("\n").trim();
-}
-
 function extractListItems(section: string): string[] {
   return section
     .split(/\r?\n/)
@@ -307,108 +297,92 @@ function shortenText(text: string, max = 72): string {
   return `${normalized.slice(0, max - 1).trimEnd()}…`;
 }
 
+function taskWorkflowModeLabel(mode: TaskWorkflowMode): string {
+  switch (mode) {
+    case "tdd":
+      return "Test-driven feature";
+    case "grill-me":
+      return "Grill me";
+    default:
+      return "Normal feature";
+  }
+}
+
+function taskIntakeModeLabel(mode: TaskWorkflowMode): string {
+  switch (mode) {
+    case "tdd": return "test-driven";
+    case "grill-me": return "short follow-up";
+    default: return "lightweight";
+  }
+}
+
+function taskIntakeSummary(name: string, workflowMode: TaskWorkflowMode, clarifications: string[] = []): string {
+  const intro = `I'll brainstorm the ${taskIntakeModeLabel(workflowMode)} spec for this task.`;
+
+  return [
+    `Task: ${name}`,
+    `Mode: ${taskWorkflowModeLabel(workflowMode)}`,
+    intro,
+    "Template spec.md and plan.md will be created. We'll fill spec.md first, then use /task-plan to refine the plan. Finally /task-approve derives the task list.",
+    ...(clarifications.length ? ["", "Approved clarifications:", ...clarifications.map((item) => `- ${item}`)] : []),
+  ].join("\n");
+}
+
+function buildTaskNewPrompt(state: TaskState, clarifications: string[] = []): string {
+  const noteBlock = clarifications.length
+    ? [`Approved clarifications:`, ...clarifications.map((item) => `- ${item}`), ""].join("\n")
+    : "";
+
+  const base = `Spec and plan templates were created in ${state.taskDir}/. Walk through the spec with the user — ask about the goal, scope, and any edge cases. Fill the spec.md from the discussion. When the spec is settled, tell the user to run /task-plan to brainstorm and refine the plan.`;
+
+  if (state.workflowMode === "tdd") {
+    return `${noteBlock}${base} For test cases, discuss "Input -> Expect" format so the plan can reference them.`;
+  }
+
+  return `${noteBlock}${base}`;
+}
+
 function planTemplate(name: string): string {
   return `# ${name} Plan\n\n> Generated from the approved spec. Revise only if the spec changes.\n\n## Approach\n- TBD\n\n## Dependencies\n- TBD\n\n## Implementation strategy\n1. TBD\n\n## Validation strategy\n- TBD\n\n## Risks\n- TBD\n`;
 }
 
-function tasksTemplate(name: string): string {
-  return `# ${name} Tasks\n\n> Generated from the approved spec. Use stable task ids and mark progress with \`/task-done T001\` (or bare \`001\`).\n> Format: \`- [ ] T001 [P] Optional parallel marker and task text\`\n\n## Setup\n- [ ] T001 Confirm spec acceptance criteria and implementation plan\n\n## Implementation\n- [ ] T002 Implement the first focused slice\n\n## Validation\n- [ ] T003 Run relevant validation and record results\n`;
-}
+function renderTasksFromPlan(name: string, planText: string): string {
+  const approach = extractListItems(sectionBody(planText, "Approach"));
+  const dependencies = extractListItems(sectionBody(planText, "Dependencies")).filter((item) => item !== "No explicit dependencies listed in the spec.");
+  const implementationSteps = extractListItems(sectionBody(planText, "Implementation strategy"));
+  const validationSteps = extractListItems(sectionBody(planText, "Validation strategy"));
+  const risks = extractListItems(sectionBody(planText, "Risks")).filter((item) => item !== "Scope may need refinement if the approved spec is underspecified.");
 
-function renderPlanFromSpec(name: string, specText: string): string {
-  const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
-  const inScope = extractListItems(subsectionBody(specText, "Scope", "In scope"));
-  const outOfScope = extractListItems(subsectionBody(specText, "Scope", "Out of scope"));
-  const requirements = extractListItems(sectionBody(specText, "Requirements"));
-  const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
-  const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
-  const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
+  const workItems = implementationSteps.length ? implementationSteps : approach;
+  const tasks: string[] = [];
+  let nextTaskNumber = 1;
+  const nextId = () => `T${formatNumber(nextTaskNumber++)}`;
 
-  const dependencies = openQuestions.length
-    ? openQuestions.map((item) => `- Resolve: ${item}`)
-    : ["- No explicit dependencies listed in the spec."];
+  tasks.push(`- [ ] ${nextId()} Confirm the approved plan and implementation approach`);
 
-  const implementationSteps = [
-    `Review the approved spec and confirm the objective: ${shortenText(objective)}`,
-    requirements.length ? `Implement the listed requirements: ${shortenText(requirements[0])}` : `Implement the in-scope behavior from the spec.`,
-    `Verify the acceptance criteria and keep out-of-scope items untouched.`,
-    `Run the relevant validation and polish any follow-up fixes.`,
-  ];
-
-  let validation: string[];
-  if (validationTests.length) {
-    validation = validationTests.map((item) => `- Validate ${item}`);
-  } else if (acceptance.length) {
-    validation = acceptance.map((item) => `- Confirm ${item}`);
-  } else {
-    validation = ["- Confirm the implementation satisfies the approved spec.", "- Run the relevant lint/type/test checks."];
+  if (dependencies.length) {
+    tasks.push(`- [ ] ${nextId()} Resolve dependency: ${shortenText(dependencies[0])}`);
   }
 
-  const risks = [
-    ...outOfScope.slice(0, 2).map((item) => `- Avoid pulling in out-of-scope work: ${item}`),
-    ...openQuestions.slice(0, 2).map((item) => `- Resolve or document any open question: ${item}`),
-  ];
-
-  return [
-    `# ${name} Plan`,
-    "",
-    "> Generated from the approved spec. Revise only if the spec changes.",
-    "",
-    "## Approach",
-    `- ${shortenText(objective)}`,
-    ...(inScope.length ? inScope.map((item) => `- In scope: ${item}`) : ["- In scope: implement the approved spec."]),
-    "",
-    "## Dependencies",
-    ...dependencies,
-    "",
-    "## Implementation strategy",
-    ...implementationSteps.map((step, index) => `${index + 1}. ${step}`),
-    "",
-    "## Validation strategy",
-    ...validation,
-    "",
-    "## Risks",
-    ...(risks.length ? risks : ["- Scope may need refinement if the approved spec is underspecified."]),
-    "",
-  ].join("\n");
-}
-
-function renderTasksFromSpec(name: string, specText: string): string {
-  const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
-  const requirements = extractListItems(sectionBody(specText, "Requirements"));
-  const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
-  const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
-  const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
-  let workItems: string[];
-  if (requirements.length) {
-    workItems = requirements;
-  } else if (acceptance.length) {
-    workItems = acceptance;
-  } else {
-    workItems = [objective];
-  }
-
-  const tasks: string[] = [
-    `- [ ] T001 Confirm the approved spec and implementation approach`,
-  ];
-
-  workItems.forEach((item, index) => {
-    tasks.push(`- [ ] T${formatNumber(index + 2)} Implement: ${shortenText(item)}`);
+  workItems.forEach((item) => {
+    tasks.push(`- [ ] ${nextId()} Implement plan step: ${shortenText(item)}`);
   });
 
-  const validationSource = validationTests[0] ?? "the implementation and record results";
-  const validationId = formatNumber(tasks.length + 1);
-  tasks.push(`- [ ] T${validationId} Validate: ${shortenText(validationSource)}`);
+  if (validationSteps.length) {
+    const validationStep = validationSteps[0].replace(/^Validate\s+/i, "");
+    tasks.push(`- [ ] ${nextId()} Validate: ${shortenText(validationStep)}`);
+  } else {
+    tasks.push(`- [ ] ${nextId()} Validate the implementation and record results`);
+  }
 
-  if (openQuestions.length) {
-    const followUpId = formatNumber(tasks.length + 1);
-    tasks.push(`- [ ] T${followUpId} Resolve any open questions or document follow-up work`);
+  if (risks.length) {
+    tasks.push(`- [ ] ${nextId()} Address risk: ${shortenText(risks[0])}`);
   }
 
   return [
     `# ${name} Tasks`,
     "",
-    "> Generated from the approved spec. Use stable task ids and mark progress with `taskflow` or `/task-done`.",
+    "> Generated from the approved plan. Use stable task ids and mark progress with `taskflow` or `/task-done`.",
     "> Format: `- [ ] T001 [P] Optional parallel marker and task text`",
     "",
     "## Implementation",
@@ -458,6 +432,7 @@ function formatState(state: TaskState): string {
   return [
     `Task #: ${taskNumberFromDir(state.taskDir)}`,
     `Name: ${state.name}`,
+    `Mode: ${taskWorkflowModeLabel(state.workflowMode)}`,
     `Dir: ${state.taskDir}`,
     `Phase: ${state.phase}${state.planApproved ? " (approved)" : ""}`,
     `Branch: ${state.branch}`,
@@ -471,7 +446,7 @@ function formatState(state: TaskState): string {
 function compactContext(state: TaskState): string {
   const next = nextItems(state, 3).map((task) => `- ${task.id}: ${task.title}`).join("\n") || "- none";
   const done = state.tasks.filter((task) => task.status === "done").length;
-  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nNext steps:\n${next}\n\nRules:\n- Use /task-run when you want the whole task completed end-to-end.\n- Use /task-next only for a single slice.\n- Do not rewrite spec/plan/tasks during implementation unless the user explicitly asks.\n- Use the taskflow tool or /task-done to mark completed task ids.`;
+  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nMode: ${taskWorkflowModeLabel(state.workflowMode)}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nNext steps:\n${next}\n\nRules:\n- Use /task-run when you want the whole task completed end-to-end.\n- Use /task-next only for a single slice.\n- Do not rewrite spec/plan/tasks during implementation unless the user explicitly asks.\n- Use the taskflow tool or /task-done to mark completed task ids.\n- Normal mode: spec only when the task is big.\n- TDD mode: keep test cases in input -> expect form before code.\n- Grill-me mode: ask short batches until you are confident.`;
 }
 
 function autonomousContext(state: TaskState): string {
@@ -480,10 +455,10 @@ function autonomousContext(state: TaskState): string {
   const worklist = remaining.length
     ? remaining.map((task) => `- ${task.id}: ${task.title} [${task.status}]`).join("\n")
     : "- none";
-  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nRemaining work:\n${worklist}\n\nRules:\n- Execute the task end-to-end, not slice-by-slice.\n- Use ${state.taskDir}/tasks.md as the source of truth.\n- Use the taskflow tool or /task-done to mark each finished task id as you complete it.\n- Keep going until all items are done, then validate and summarize the result.`;
+  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nMode: ${taskWorkflowModeLabel(state.workflowMode)}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nRemaining work:\n${worklist}\n\nRules:\n- Execute the task end-to-end, not slice-by-slice.\n- Use ${state.taskDir}/tasks.md as the source of truth.\n- Use the taskflow tool or /task-done to mark each finished task id as you complete it.\n- Keep going until all items are done, then validate and summarize the result.\n- Normal mode: spec only when the task is big.\n- TDD mode: keep test cases in input -> expect form before code.\n- Grill-me mode: ask short batches until you are confident.`;
 }
 
-async function createTask(cwd: string, rawName: string): Promise<TaskState> {
+async function createTask(cwd: string, rawName: string, workflowMode: TaskWorkflowMode): Promise<TaskState> {
   const name = rawName.trim();
   if (!name) throw new Error("Task name is required");
 
@@ -491,35 +466,33 @@ async function createTask(cwd: string, rawName: string): Promise<TaskState> {
   const absDir = resolve(cwd, taskDir);
   await mkdir(absDir, { recursive: true });
 
-  const state: TaskState = {
-    version: 1,
+  const absSpec = resolve(absDir, "spec.md");
+  const absPlan = resolve(absDir, "plan.md");
+  if (!(await exists(absSpec))) {
+    const modeComment = workflowMode === "normal" ? "" : `<!-- workflowMode: ${workflowMode} -->\n\n`;
+    await writeFile(absSpec, specTemplate(name, modeComment), "utf8");
+  }
+  if (!(await exists(absPlan))) {
+    await writeFile(absPlan, planTemplate(name), "utf8");
+  }
+
+  await setCurrentTask(cwd, taskDir);
+  return {
     name,
     taskDir,
     phase: "spec",
     branch: branchNameFromTaskDir(taskDir),
+    workflowMode,
     planApproved: false,
-    createdAt: nowIso(),
-    updatedAt: nowIso(),
     tasks: [],
   };
-
-  await writeFile(join(absDir, "spec.md"), specTemplate(name), "utf8");
-  await saveState(cwd, state);
-  await setCurrentTask(cwd, taskDir);
-  return state;
 }
 
 async function approveTask(cwd: string, state: TaskState): Promise<TaskState> {
-  const specPath = resolve(cwd, state.taskDir, "spec.md");
   const planPath = resolve(cwd, state.taskDir, "plan.md");
   const tasksPath = resolve(cwd, state.taskDir, "tasks.md");
-  const specText = await readFile(specPath, "utf8");
-  const planText = renderPlanFromSpec(state.name, specText);
-  const tasksText = renderTasksFromSpec(state.name, specText);
-
-  await withFileMutationQueue(planPath, async () => {
-    await writeFile(planPath, planText, "utf8");
-  });
+  const planText = await readFile(planPath, "utf8");
+  const tasksText = renderTasksFromPlan(state.name, planText);
 
   await withFileMutationQueue(tasksPath, async () => {
     await writeFile(tasksPath, tasksText, "utf8");
@@ -530,11 +503,12 @@ async function approveTask(cwd: string, state: TaskState): Promise<TaskState> {
     throw new Error(`Generated no task rows for ${relative(cwd, tasksPath)}`);
   }
 
-  state.tasks = parsed;
-  state.planApproved = true;
-  state.phase = "implement";
-  await saveState(cwd, state);
-  return state;
+  return {
+    ...state,
+    tasks: parsed,
+    planApproved: true,
+    phase: "implement",
+  };
 }
 
 interface MarkDoneResult {
@@ -558,7 +532,6 @@ async function markDone(cwd: string, state: TaskState, ids?: string[], note?: st
   const alreadyDone: string[] = [];
   const missing: string[] = [];
   const noteText = note?.trim();
-  let changed = false;
 
   for (const [index, targetId] of requestedIds.entries()) {
     const task = state.tasks.find((item) => item.id.toLowerCase() === targetId.toLowerCase());
@@ -573,22 +546,12 @@ async function markDone(cwd: string, state: TaskState, ids?: string[], note?: st
     }
 
     task.status = "done";
-    changed = true;
     if (noteText && index === requestedIds.length - 1) {
       task.notes = [...(task.notes ?? []), noteText];
     }
 
     await syncTaskCheckbox(cwd, state, task.id);
     completed.push(task.id);
-  }
-
-  if (state.tasks.length > 0 && state.tasks.every((item) => item.status === "done") && state.phase !== "review") {
-    state.phase = "review";
-    changed = true;
-  }
-
-  if (changed) {
-    await saveState(cwd, state);
   }
 
   const fresh = await hydrateTaskState(cwd, state.taskDir);
@@ -629,21 +592,23 @@ export default function taskflow(pi: ExtensionAPI) {
     name: "taskflow",
     label: "Taskflow",
     description: "Read or update the current spec-driven task state without loading full task files.",
-    promptSnippet: "Manage compact spec-driven task state plus autonomous end-to-end runs.",
+    promptSnippet: "Manage interactive task intake modes, compact task state, and autonomous end-to-end runs.",
     promptGuidelines: [
       "Use taskflow to read or update task progress instead of rewriting task markdown during implementation.",
+      "Use /task-new as the interactive intake: creates template spec.md and plan.md, fills spec.md from discussion, then tells the user to run /task-plan.",
+      "Use /task-plan to brainstorm and refine plan.md before approving.",
+      "Use taskflow action approve to derive the task list from the approved plan.",
       "Use taskflow action run for end-to-end execution and taskflow action next only for a single slice.",
-      "Use taskflow action approve to generate the plan and task list from the approved spec.",
       "Use taskflow action done after completing one or more stable task ids.",
     ],
     parameters: TaskflowParams,
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId: unknown, params: TaskflowToolParams, _signal: unknown, _onUpdate: unknown, ctx: ExtensionContext) {
       const state = await loadState(ctx.cwd);
       if (!state) throw new Error("No current taskflow task. Run /task-new <name> first.");
 
       if (params.action === "approve") {
         const approved = await approveTask(ctx.cwd, state);
-        return { content: [{ type: "text", text: `Generated plan and tasks from the approved spec.\n\n${formatState(approved)}` }], details: approved };
+        return { content: [{ type: "text", text: `Derived tasks from the approved plan.\n\n${formatState(approved)}` }], details: approved };
       }
 
       if (params.action === "done") {
@@ -680,23 +645,66 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-new", {
-    description: "Create a spec-first task folder (usage: /task-new <feature-or-bug-name>)",
-    handler: async (args, ctx) => {
-      const name = args.trim();
-      if (!name) {
-        ctx.ui.notify("Usage: /task-new <feature-or-bug-name>", "warning");
+    description: "Create an interactive task intake flow",
+    handler: async (args: string, ctx: ExtensionContext) => {
+      const modeChoice = await ctx.ui.select("Choose task workflow mode", ["Normal feature", "Test-driven feature", "Grill me"]);
+      if (!modeChoice) {
+        ctx.ui.notify("Task creation cancelled.", "warning");
         return;
       }
-      const state = await createTask(ctx.cwd, name);
+
+      const nameInput = await ctx.ui.input("Feature or bug name", args.trim() || "");
+      if (nameInput === undefined) {
+        ctx.ui.notify("Task creation cancelled.", "warning");
+        return;
+      }
+
+      const name = nameInput.trim();
+      if (!name) {
+        ctx.ui.notify("Task name is required.", "warning");
+        return;
+      }
+
+      let workflowMode: TaskWorkflowMode;
+      if (modeChoice === "Test-driven feature") {
+        workflowMode = "tdd";
+      } else if (modeChoice === "Grill me") {
+        workflowMode = "grill-me";
+      } else {
+        workflowMode = "normal";
+      }
+      const reviewNotes: string[] = [];
+
+      while (true) {
+        const confirmed = await ctx.ui.confirm("Review spec and plan before creation", taskIntakeSummary(name, workflowMode, reviewNotes));
+
+        if (confirmed) break;
+
+        const noteInput = await ctx.ui.input("What should change before I create the spec and plan?", "");
+        if (noteInput === undefined) {
+          ctx.ui.notify("Task creation cancelled.", "warning");
+          return;
+        }
+
+        const note = noteInput.trim();
+        if (!note) {
+          ctx.ui.notify("Please describe what to change or cancel.", "warning");
+          continue;
+        }
+
+        reviewNotes.push(note);
+      }
+
+      const state = await createTask(ctx.cwd, name, workflowMode);
       pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Created taskflow task.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
-      ctx.ui.setEditorText(`Ask me clarifying questions for ${state.name} before drafting the spec. Do not edit files or fill ${state.taskDir}/spec.md yet. Do not create a separate tasks/<name>.md file. After I answer, write only ${state.taskDir}/spec.md. Include a "Validation / tests" section with the checks that prove this works. Plan and tasks will be generated on /task-approve.`);
+      ctx.ui.setEditorText(buildTaskNewPrompt(state, reviewNotes));
     },
   });
 
   pi.registerCommand("task-current", {
     description: "Set current task by number or path (usage: /task-current 001)",
-    handler: async (args, ctx) => {
+    handler: async (args: string, ctx: ExtensionContext) => {
       const taskRef = args.trim();
       if (!taskRef) {
         ctx.ui.notify("Usage: /task-current 001", "warning");
@@ -715,37 +723,59 @@ export default function taskflow(pi: ExtensionAPI) {
 
   pi.registerCommand("task-status", {
     description: "Show compact current task state",
-    handler: async (_args, ctx) => {
+    handler: async (_args: unknown, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       pi.sendMessage({ customType: "taskflow", content: state ? formatState(state) : "No current taskflow task.", display: true }, { triggerTurn: false });
     },
   });
 
   pi.registerCommand("task-approve", {
-    description: "Generate plan/tasks from the approved spec and enter implementation mode",
-    handler: async (_args, ctx) => {
+    description: "Derive task list from the approved plan.md and enter implementation mode",
+    handler: async (_args: unknown, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       const approved = await approveTask(ctx.cwd, state);
-      pi.sendMessage({ customType: "taskflow", content: `Generated plan and tasks from the approved spec.\n\n${formatState(approved)}`, display: true }, { triggerTurn: false });
+      pi.sendMessage({ customType: "taskflow", content: `Derived tasks from the approved plan.\n\n${formatState(approved)}`, display: true }, { triggerTurn: false });
+    },
+  });
+
+  pi.registerCommand("task-plan", {
+    description: "Open an interactive plan brainstorming session that writes plan.md",
+    handler: async (_args: unknown, ctx: ExtensionContext) => {
+      const state = await loadState(ctx.cwd);
+      if (!state) return ctx.ui.notify("No current taskflow task.", "error");
+      if (state.planApproved) return ctx.ui.notify("Plan is already approved. Use /task-revise if you need to change it.", "warning");
+
+      pi.sendMessage({ customType: "taskflow", content: compactContext(state), display: true }, { triggerTurn: false });
+
+      const prompt = [
+        `Planning ${state.name}. The plan.md template is at ${state.taskDir}/plan.md.`,
+        "",
+        "Brainstorm the approach with the user — ask about implementation details, dependencies, validation strategy, and risks. Refine plan.md together. When the plan is settled, run /task-approve to generate tasks from it.",
+      ].join("\n");
+
+      ctx.ui.setEditorText(prompt);
     },
   });
 
   pi.registerCommand("task-revise", {
     description: "Explicitly reopen the current task for spec/plan/task revision",
-    handler: async (_args, ctx) => {
+    handler: async (_args: unknown, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
-      state.phase = "plan";
-      state.planApproved = false;
-      await saveState(ctx.cwd, state);
-      pi.sendMessage({ customType: "taskflow", content: `Task reopened for revision.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
+      const tasksPath = resolve(ctx.cwd, state.taskDir, "tasks.md");
+      if (await exists(tasksPath)) {
+        const { unlink } = await import("node:fs/promises");
+        await unlink(tasksPath);
+      }
+      const updated = (await hydrateTaskState(ctx.cwd, state.taskDir)) ?? state;
+      pi.sendMessage({ customType: "taskflow", content: `Task reopened for revision.\n\n${formatState(updated)}`, display: true }, { triggerTurn: false });
     },
   });
 
   pi.registerCommand("task-next", {
     description: "Prepare the next implementation prompt from compact task state",
-    handler: async (_args, ctx) => {
+    handler: async (_args: unknown, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       const next = nextItems(state, 1)[0];
@@ -761,7 +791,7 @@ export default function taskflow(pi: ExtensionAPI) {
 
   pi.registerCommand("task-run", {
     description: "Prepare an end-to-end implementation prompt for the full task",
-    handler: async (_args, ctx) => {
+    handler: async (_args: unknown, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       if (!state.planApproved) return ctx.ui.notify("Approve the task first with /task-approve.", "warning");
@@ -773,7 +803,7 @@ export default function taskflow(pi: ExtensionAPI) {
 
   pi.registerCommand("task-done", {
     description: "Mark taskflow tasks done (usage: /task-done T001 T002 [note] or /task-done 001 002 [note])",
-    handler: async (args, ctx) => {
+    handler: async (args: string, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       const parsed = parseTaskDoneArgs(args);
@@ -784,7 +814,7 @@ export default function taskflow(pi: ExtensionAPI) {
 
   pi.registerCommand("task-detach", {
     description: "Clear the current task and reset session to generic state",
-    handler: async (_args, ctx) => {
+    handler: async (_args: unknown, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task to detach from.", "warning");
       await clearCurrentTask(ctx.cwd);
@@ -795,7 +825,7 @@ export default function taskflow(pi: ExtensionAPI) {
 
   pi.registerCommand("task-branch", {
     description: "Show or create the suggested task branch (usage: /task-branch [--create])",
-    handler: async (args, ctx) => {
+    handler: async (args: string, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       if (!args.includes("--create")) {
@@ -813,7 +843,7 @@ export default function taskflow(pi: ExtensionAPI) {
 
   pi.registerCommand("task-pr", {
     description: "Prepare a PR drafting prompt from current task state and git context",
-    handler: async (_args, ctx) => {
+    handler: async (_args: unknown, ctx: ExtensionContext) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       const status = await gitOutput(pi, ["status", "-sb"]);
@@ -823,7 +853,7 @@ export default function taskflow(pi: ExtensionAPI) {
     },
   });
 
-  pi.on("before_agent_start", async (_event, ctx) => {
+  pi.on("before_agent_start", async (_event: unknown, ctx: ExtensionContext) => {
     const state = await loadState(ctx.cwd);
     if (!state) return;
     return {
@@ -835,9 +865,9 @@ export default function taskflow(pi: ExtensionAPI) {
     };
   });
 
-  pi.on("tool_call", async (event, ctx: ExtensionContext) => {
+  pi.on("tool_call", async (event: TaskflowToolCallEvent, ctx: ExtensionContext) => {
     if (event.toolName !== "edit" && event.toolName !== "write") return;
-    const input = event.input as { path?: unknown };
+    const input = event.input;
     const path = typeof input.path === "string" ? input.path : undefined;
     if (!path) return;
 

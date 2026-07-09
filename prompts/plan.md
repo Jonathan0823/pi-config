@@ -5,5 +5,6 @@ argument-hint: <task-name>
 
 Use `tasks/$1.md` as the source of truth.
 Break the work into ordered steps with dependencies and verification points.
+If the spec includes test cases, carry them into the plan before implementation steps.
 Call out risks and what should stay out of scope.
 Keep the plan actionable and short.
