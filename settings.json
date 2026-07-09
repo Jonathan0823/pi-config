@@ -13,9 +13,9 @@
   "transport": "auto",
   "packages": [
     "npm:context-mode",
-    "npm:pi-web-access",
     "npm:pi-kilocode",
     "git:github.com/DietrichGebert/ponytail",
+    "npm:@juicesharp/rpiv-web-tools"
   ],
   "compaction": {
     "enabled": true,
@@ -30,7 +30,7 @@
   "defaultProvider": "opencode",
   "defaultModel": "mimo-v2.5-free",
   "defaultThinkingLevel": "high",
-  "lastChangelogVersion": "0.79.1",
+  "lastChangelogVersion": "0.80.3",
   "enabledModels": [
     "kilocode/kilo-auto/free",
     "openai-codex/gpt-5.4-mini",
