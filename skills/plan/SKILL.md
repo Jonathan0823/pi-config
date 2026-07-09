@@ -5,11 +5,10 @@ description: Generic /plan helper that asks for missing context, then returns a 
 
 # Generic /plan
 
-Trigger: `/plan`
-
 Use the full text after `/plan` as the request.
 
 ## Workflow
+
 1. Read the request literally.
 2. If it is empty or too vague, ask 1-3 short clarifying questions focused on:
    - goal
@@ -24,27 +23,34 @@ Use the full text after `/plan` as the request.
 6. Return a plain-text draft plan only.
 
 ## Output rules
+
 - Do not write files.
 - Keep it short, readable, and actionable.
 - Use this template:
 
 Goal:
+
 - ...
 
 Assumptions:
+
 - ...
 
 Scope:
+
 - In scope: ...
 - Out of scope: ...
 
 Plan:
+
 1. ...
 2. ...
 3. ...
 
 Risks / edge cases:
+
 - ...
 
 Open questions:
+
 - ...

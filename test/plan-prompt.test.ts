@@ -1,22 +1,18 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-void (async () => {
-  try {
-    const prompt = await readFile("prompts/plan.md", "utf8");
+try {
+  const prompt = await readFile("prompts/plan.md", "utf8");
 
-    assert.match(prompt, /plain-text draft plan/i);
-    assert.match(prompt, /Request: \$1/);
-    assert.match(prompt, /ask 1-3 short clarifying questions/i);
-    assert.match(prompt, /do not write files/i);
-    assert.match(prompt, /Goal:\n- \.{3}/);
-    assert.match(prompt, /Open questions:\n- \.{3}/);
-    assert.doesNotMatch(prompt, /tasks\/\$1\.md/i);
-    assert.doesNotMatch(prompt, /approved spec/i);
+  assert.match(prompt, /Turn an approved spec into an implementation plan/i);
+  assert.match(prompt, /Use `tasks\/\$1\.md` as the source of truth\./i);
+  assert.match(prompt, /ordered steps with dependencies and verification points/i);
+  assert.match(prompt, /carry them into the plan before implementation steps/i);
+  assert.match(prompt, /stay out of scope/i);
+  assert.match(prompt, /plan actionable and short/i);
 
-    console.log("plan prompt ok");
-  } catch (error) {
-    console.error(error);
-    process.exitCode = 1;
-  }
-})();
+  console.log("plan prompt ok");
+} catch (error) {
+  console.error(error);
+  process.exitCode = 1;
+}
