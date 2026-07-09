@@ -362,7 +362,7 @@ function taskIntakeSummary(name: string, workflowMode: TaskWorkflowMode, clarifi
     `Task: ${name}`,
     `Mode: ${taskWorkflowModeLabel(workflowMode)}`,
     intro,
-    "Template spec.md and plan.md were created. We'll fill spec.md first, then use /task-plan to refine the plan. Finally /task-approve derives the task list.",
+    "Template spec.md and plan.md will be created. We'll fill spec.md first, then use /task-plan to refine the plan. Finally /task-approve derives the task list.",
     ...(clarifications.length ? ["", "Approved clarifications:", ...clarifications.map((item) => `- ${item}`)] : []),
   ].join("\n");
 }
