@@ -346,20 +346,40 @@ function taskWorkflowModeLabel(mode: TaskWorkflowMode): string {
   }
 }
 
-function buildTaskNewPrompt(state: TaskState, isBigTask: boolean): string {
+function taskIntakeModeLabel(mode: TaskWorkflowMode): string {
+  switch (mode) {
+    case "tdd": return "test-driven";
+    case "grill-me": return "short follow-up";
+    default: return "lightweight";
+  }
+}
+
+function taskIntakeSummary(name: string, workflowMode: TaskWorkflowMode, clarifications: string[] = []): string {
+  const intro = `I’ll draft a ${taskIntakeModeLabel(workflowMode)} spec and generic plan.`;
+
+  return [
+    `Task: ${name}`,
+    `Mode: ${taskWorkflowModeLabel(workflowMode)}`,
+    intro,
+    "I will only create spec.md and plan.md after you approve this summary.",
+    ...(clarifications.length ? ["", "Approved clarifications:", ...clarifications.map((item) => `- ${item}`)] : []),
+  ].join("\n");
+}
+
+function buildTaskNewPrompt(state: TaskState, clarifications: string[] = []): string {
+  const noteBlock = clarifications.length
+    ? [`Approved clarifications:`, ...clarifications.map((item) => `- ${item}`), ""].join("\n")
+    : "";
+
   if (state.workflowMode === "tdd") {
-    return `Ask only the minimum clarifying questions needed for ${state.name}. Then draft the spec with a \"Test cases\" section first. Write each case as \"Input: ... -> Expect: ...\" so the plan can carry it forward. Keep the plan soft-TDD: test cases first, then implementation checklist, then validation/tests. Do not edit files or write code yet. Plan and tasks will be generated on /task-approve.`;
+    return `${noteBlock}Draft the spec and fill plan.md from the approved summary for ${state.name}. Carry test cases as "Input -> Expect" so /task-approve can turn the approved plan into tasks. Do not edit tasks yet.`;
   }
 
   if (state.workflowMode === "grill-me") {
-    return `Grill me on ${state.name} with short question batches until you are confident. Keep each batch tight and focused. When you have enough signal, draft the spec only. Do not edit files or write code yet. Plan and tasks will be generated on /task-approve.`;
+    return `${noteBlock}Draft the spec and fill plan.md from the approved summary for ${state.name}. Keep the wording tight and reflect the approved clarifications. Do not edit tasks yet.`;
   }
 
-  if (isBigTask) {
-    return `This looks like a big task for ${state.name}. Ask clarifying questions, then write a full spec before code. Include objective, scope, assumptions, requirements, test cases if relevant, validation/tests, acceptance criteria, and notes. Do not edit files or write code yet. Plan and tasks will be generated on /task-approve.`;
-  }
-
-  return `This looks like a small task for ${state.name}. Keep the spec lightweight and ask only the minimum clarifying questions needed. Write a compact brief with objective, scope, assumptions, checklist, risks, acceptance, validation/tests, and notes. Do not edit files or write code yet. Plan and tasks will be generated on /task-approve.`;
+  return `${noteBlock}This looks like a small task for ${state.name}. Keep the spec lightweight, then fill plan.md from the approved summary. Do not edit tasks yet.`;
 }
 
 function planTemplate(name: string): string {
@@ -563,7 +583,6 @@ async function createTask(cwd: string, rawName: string, workflowMode: TaskWorkfl
     tasks: [],
   };
 
-  await writeFile(join(absDir, "spec.md"), specTemplate(name), "utf8");
   await saveState(cwd, state);
   await setCurrentTask(cwd, taskDir);
   return state;
@@ -692,7 +711,7 @@ export default function taskflow(pi: ExtensionAPI) {
     promptSnippet: "Manage interactive task intake modes, compact task state, and autonomous end-to-end runs.",
     promptGuidelines: [
       "Use taskflow to read or update task progress instead of rewriting task markdown during implementation.",
-      "Use /task-new as the interactive intake: choose normal, tdd, or grill-me before drafting the spec.",
+      "Use /task-new as the interactive intake: show the spec/plan summary first, then wait for approval before drafting the spec and plan.",
       "Use taskflow action run for end-to-end execution and taskflow action next only for a single slice.",
       "Use taskflow action approve to generate the plan and task list from the approved spec.",
       "Use taskflow action done after completing one or more stable task ids.",
@@ -761,18 +780,40 @@ export default function taskflow(pi: ExtensionAPI) {
         return;
       }
 
-      const workflowMode: TaskWorkflowMode = modeChoice === "Test-driven feature"
-        ? "tdd"
-        : modeChoice === "Grill me"
-          ? "grill-me"
-          : "normal";
-      const isBigTask = workflowMode === "normal"
-        ? await ctx.ui.confirm("Is this a big task?", "If yes, I’ll ask for a full spec. If no, I’ll keep it lightweight.")
-        : false;
+      let workflowMode: TaskWorkflowMode;
+      if (modeChoice === "Test-driven feature") {
+        workflowMode = "tdd";
+      } else if (modeChoice === "Grill me") {
+        workflowMode = "grill-me";
+      } else {
+        workflowMode = "normal";
+      }
+      const reviewNotes: string[] = [];
+
+      while (true) {
+        const confirmed = await ctx.ui.confirm("Review spec and plan before creation", taskIntakeSummary(name, workflowMode, reviewNotes));
+
+        if (confirmed) break;
+
+        const noteInput = await ctx.ui.input("What should change before I create the spec and plan?", "");
+        if (noteInput === undefined) {
+          ctx.ui.notify("Task creation cancelled.", "warning");
+          return;
+        }
+
+        const note = noteInput.trim();
+        if (!note) {
+          ctx.ui.notify("Please describe what to change or cancel.", "warning");
+          continue;
+        }
+
+        reviewNotes.push(note);
+      }
+
       const state = await createTask(ctx.cwd, name, workflowMode);
       pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Created taskflow task.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
-      ctx.ui.setEditorText(buildTaskNewPrompt(state, isBigTask));
+      ctx.ui.setEditorText(buildTaskNewPrompt(state, reviewNotes));
     },
   });
 
