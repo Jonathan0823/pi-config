@@ -458,37 +458,43 @@ function selectWorkflowItems(testCases: string[], requirements: string[], accept
   return acceptance.length ? acceptance : [objective];
 }
 
-function renderTasksFromSpec(name: string, specText: string): string {
-  const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
-  const requirements = extractListItems(sectionBody(specText, "Requirements"));
-  const testCases = extractListItems(sectionBody(specText, "Test cases"));
-  const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
-  const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
-  const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
-  const workItems = selectWorkflowItems(testCases, requirements, acceptance, objective);
+function renderTasksFromPlan(name: string, planText: string): string {
+  const approach = extractListItems(sectionBody(planText, "Approach"));
+  const dependencies = extractListItems(sectionBody(planText, "Dependencies")).filter((item) => item !== "No explicit dependencies listed in the spec.");
+  const implementationSteps = extractListItems(sectionBody(planText, "Implementation strategy"));
+  const validationSteps = extractListItems(sectionBody(planText, "Validation strategy"));
+  const risks = extractListItems(sectionBody(planText, "Risks")).filter((item) => item !== "Scope may need refinement if the approved spec is underspecified.");
 
-  const tasks: string[] = [
-    `- [ ] T001 Confirm the approved spec and implementation approach`,
-  ];
+  const workItems = implementationSteps.length ? implementationSteps : approach;
+  const tasks: string[] = [];
+  let nextTaskNumber = 1;
+  const nextId = () => `T${formatNumber(nextTaskNumber++)}`;
 
-  workItems.forEach((item, index) => {
-    const prefix = index < testCases.length ? "Implement test case" : "Implement";
-    tasks.push(`- [ ] T${formatNumber(index + 2)} ${prefix}: ${shortenText(item)}`);
+  tasks.push(`- [ ] ${nextId()} Confirm the approved plan and implementation approach`);
+
+  workItems.forEach((item) => {
+    tasks.push(`- [ ] ${nextId()} Implement plan step: ${shortenText(item)}`);
   });
 
-  const validationSource = validationTests[0] ?? "the implementation and record results";
-  const validationId = formatNumber(tasks.length + 1);
-  tasks.push(`- [ ] T${validationId} Validate: ${shortenText(validationSource)}`);
+  if (validationSteps.length) {
+    const validationStep = validationSteps[0].replace(/^Validate\s+/i, "");
+    tasks.push(`- [ ] ${nextId()} Validate: ${shortenText(validationStep)}`);
+  } else {
+    tasks.push(`- [ ] ${nextId()} Validate the implementation and record results`);
+  }
 
-  if (openQuestions.length) {
-    const followUpId = formatNumber(tasks.length + 1);
-    tasks.push(`- [ ] T${followUpId} Resolve any open questions or document follow-up work`);
+  if (dependencies.length) {
+    tasks.push(`- [ ] ${nextId()} Resolve dependency: ${shortenText(dependencies[0])}`);
+  }
+
+  if (risks.length) {
+    tasks.push(`- [ ] ${nextId()} Address risk: ${shortenText(risks[0])}`);
   }
 
   return [
     `# ${name} Tasks`,
     "",
-    "> Generated from the approved spec. Use stable task ids and mark progress with `taskflow` or `/task-done`.",
+    "> Generated from the approved plan. Use stable task ids and mark progress with `taskflow` or `/task-done`.",
     "> Format: `- [ ] T001 [P] Optional parallel marker and task text`",
     "",
     "## Implementation",
@@ -606,7 +612,7 @@ async function approveTask(cwd: string, state: TaskState): Promise<TaskState> {
   const tasksPath = resolve(cwd, state.taskDir, "tasks.md");
   const specText = await readFile(specPath, "utf8");
   const planText = renderPlanFromSpec(state.name, specText);
-  const tasksText = renderTasksFromSpec(state.name, specText);
+  const tasksText = renderTasksFromPlan(state.name, planText);
 
   await withFileMutationQueue(planPath, async () => {
     await writeFile(planPath, planText, "utf8");
@@ -725,7 +731,7 @@ export default function taskflow(pi: ExtensionAPI) {
       "Use taskflow to read or update task progress instead of rewriting task markdown during implementation.",
       "Use /task-new as the interactive intake: creates template spec.md and plan.md, shows the summary, waits for approval then fills them from your clarifications.",
       "Use taskflow action run for end-to-end execution and taskflow action next only for a single slice.",
-      "Use taskflow action approve to generate the plan and task list from the approved spec.",
+      "Use taskflow action approve to generate the plan from the spec, then derive the task list from the approved plan.",
       "Use taskflow action done after completing one or more stable task ids.",
     ],
     parameters: TaskflowParams,
@@ -735,7 +741,7 @@ export default function taskflow(pi: ExtensionAPI) {
 
       if (params.action === "approve") {
         const approved = await approveTask(ctx.cwd, state);
-        return { content: [{ type: "text", text: `Generated plan and tasks from the approved spec.\n\n${formatState(approved)}` }], details: approved };
+        return { content: [{ type: "text", text: `Generated plan from the spec and tasks from the plan.\n\n${formatState(approved)}` }], details: approved };
       }
 
       if (params.action === "done") {
@@ -857,12 +863,12 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-approve", {
-    description: "Generate plan/tasks from the approved spec and enter implementation mode",
+    description: "Generate plan from the approved spec, then tasks from the approved plan and enter implementation mode",
     handler: async (_args, ctx) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       const approved = await approveTask(ctx.cwd, state);
-      pi.sendMessage({ customType: "taskflow", content: `Generated plan and tasks from the approved spec.\n\n${formatState(approved)}`, display: true }, { triggerTurn: false });
+      pi.sendMessage({ customType: "taskflow", content: `Generated plan from the spec and tasks from the plan.\n\n${formatState(approved)}`, display: true }, { triggerTurn: false });
     },
   });
 
