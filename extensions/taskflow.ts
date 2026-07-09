@@ -7,6 +7,7 @@ import { Type } from "typebox";
 
 type Phase = "spec" | "plan" | "tasks" | "implement" | "review" | "done";
 type TaskStatus = "pending" | "in_progress" | "blocked" | "done";
+type TaskWorkflowMode = "normal" | "tdd" | "grill-me";
 
 interface TaskItem {
   id: string;
@@ -22,6 +23,7 @@ interface TaskState {
   taskDir: string;
   phase: Phase;
   branch: string;
+  workflowMode: TaskWorkflowMode;
   planApproved: boolean;
   createdAt: string;
   updatedAt: string;
@@ -183,7 +185,25 @@ function parseTaskDoneArgs(input: string): ParsedDoneArgs {
 async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState | undefined> {
   const statePath = resolve(cwd, taskDir, STATE_FILE);
   if (await exists(statePath)) {
-    return JSON.parse(await readFile(statePath, "utf8")) as TaskState;
+    const loaded = JSON.parse(await readFile(statePath, "utf8")) as Partial<TaskState>;
+    const state: TaskState = {
+      version: loaded.version ?? 1,
+      name: loaded.name ?? inferTaskName(taskDir),
+      taskDir,
+      phase: loaded.phase ?? "spec",
+      branch: loaded.branch ?? branchNameFromTaskDir(taskDir),
+      workflowMode: loaded.workflowMode === "tdd" || loaded.workflowMode === "grill-me" ? loaded.workflowMode : "normal",
+      planApproved: Boolean(loaded.planApproved),
+      createdAt: loaded.createdAt ?? nowIso(),
+      updatedAt: loaded.updatedAt ?? nowIso(),
+      tasks: Array.isArray(loaded.tasks) ? loaded.tasks : [],
+    };
+
+    if (loaded.workflowMode !== state.workflowMode) {
+      await saveState(cwd, state);
+    }
+
+    return state;
   }
 
   if (!(await isTaskDir(cwd, taskDir))) return undefined;
@@ -255,7 +275,7 @@ async function saveState(cwd: string, state: TaskState): Promise<void> {
 }
 
 function specTemplate(name: string): string {
-  return `# ${name}\n\n## Objective\n- TBD\n\n## User stories\n- As a <user>, I want <capability>, so that <outcome>.\n\n## Scope\n### In scope\n- TBD\n\n### Out of scope\n- TBD\n\n## Requirements\n- TBD\n\n## Validation / tests\n- TBD\n\n## Acceptance criteria\n- [ ] TBD\n\n## Open questions\n- TBD\n`;
+  return `# ${name}\n\n## Objective\n- TBD\n\n## User stories\n- As a <user>, I want <capability>, so that <outcome>.\n\n## Scope\n### In scope\n- TBD\n\n### Out of scope\n- TBD\n\n## Requirements\n- TBD\n\n## Test cases\n- TBD\n\n## Validation / tests\n- TBD\n\n## Acceptance criteria\n- [ ] TBD\n\n## Open questions\n- TBD\n`;
 }
 
 function escapeRegExp(input: string): string {
@@ -307,6 +327,33 @@ function shortenText(text: string, max = 72): string {
   return `${normalized.slice(0, max - 1).trimEnd()}…`;
 }
 
+function taskWorkflowModeLabel(mode: TaskWorkflowMode): string {
+  switch (mode) {
+    case "tdd":
+      return "Test-driven feature";
+    case "grill-me":
+      return "Grill me";
+    default:
+      return "Normal feature";
+  }
+}
+
+function buildTaskNewPrompt(state: TaskState, isBigTask: boolean): string {
+  if (state.workflowMode === "tdd") {
+    return `Ask only the minimum clarifying questions needed for ${state.name}. Then draft the spec with a \"Test cases\" section first. Write each case as \"Input: ... -> Expect: ...\" so the plan can carry it forward. Keep the plan soft-TDD: test cases first, then implementation checklist, then validation/tests. Do not edit files or write code yet. Plan and tasks will be generated on /task-approve.`;
+  }
+
+  if (state.workflowMode === "grill-me") {
+    return `Grill me on ${state.name} with short question batches until you are confident. Keep each batch tight and focused. When you have enough signal, draft the spec only. Do not edit files or write code yet. Plan and tasks will be generated on /task-approve.`;
+  }
+
+  if (isBigTask) {
+    return `This looks like a big task for ${state.name}. Ask clarifying questions, then write a full spec before code. Include objective, scope, assumptions, requirements, test cases if relevant, validation/tests, acceptance criteria, and notes. Do not edit files or write code yet. Plan and tasks will be generated on /task-approve.`;
+  }
+
+  return `This looks like a small task for ${state.name}. Keep the spec lightweight and ask only the minimum clarifying questions needed. Write a compact brief with objective, scope, assumptions, checklist, risks, acceptance, validation/tests, and notes. Do not edit files or write code yet. Plan and tasks will be generated on /task-approve.`;
+}
+
 function planTemplate(name: string): string {
   return `# ${name} Plan\n\n> Generated from the approved spec. Revise only if the spec changes.\n\n## Approach\n- TBD\n\n## Dependencies\n- TBD\n\n## Implementation strategy\n1. TBD\n\n## Validation strategy\n- TBD\n\n## Risks\n- TBD\n`;
 }
@@ -320,6 +367,7 @@ function renderPlanFromSpec(name: string, specText: string): string {
   const inScope = extractListItems(subsectionBody(specText, "Scope", "In scope"));
   const outOfScope = extractListItems(subsectionBody(specText, "Scope", "Out of scope"));
   const requirements = extractListItems(sectionBody(specText, "Requirements"));
+  const testCases = extractListItems(sectionBody(specText, "Test cases"));
   const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
   const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
   const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
@@ -361,6 +409,7 @@ function renderPlanFromSpec(name: string, specText: string): string {
     "## Dependencies",
     ...dependencies,
     "",
+    ...(testCases.length ? ["## Test cases", ...testCases.map((item) => `- ${item}`), ""] : []),
     "## Implementation strategy",
     ...implementationSteps.map((step, index) => `${index + 1}. ${step}`),
     "",
@@ -376,24 +425,19 @@ function renderPlanFromSpec(name: string, specText: string): string {
 function renderTasksFromSpec(name: string, specText: string): string {
   const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
   const requirements = extractListItems(sectionBody(specText, "Requirements"));
+  const testCases = extractListItems(sectionBody(specText, "Test cases"));
   const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
   const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
   const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
-  let workItems: string[];
-  if (requirements.length) {
-    workItems = requirements;
-  } else if (acceptance.length) {
-    workItems = acceptance;
-  } else {
-    workItems = [objective];
-  }
+  const workItems = testCases.length ? [...testCases, ...requirements] : requirements.length ? requirements : acceptance.length ? acceptance : [objective];
 
   const tasks: string[] = [
     `- [ ] T001 Confirm the approved spec and implementation approach`,
   ];
 
   workItems.forEach((item, index) => {
-    tasks.push(`- [ ] T${formatNumber(index + 2)} Implement: ${shortenText(item)}`);
+    const prefix = index < testCases.length ? "Implement test case" : "Implement";
+    tasks.push(`- [ ] T${formatNumber(index + 2)} ${prefix}: ${shortenText(item)}`);
   });
 
   const validationSource = validationTests[0] ?? "the implementation and record results";
@@ -458,6 +502,7 @@ function formatState(state: TaskState): string {
   return [
     `Task #: ${taskNumberFromDir(state.taskDir)}`,
     `Name: ${state.name}`,
+    `Mode: ${taskWorkflowModeLabel(state.workflowMode)}`,
     `Dir: ${state.taskDir}`,
     `Phase: ${state.phase}${state.planApproved ? " (approved)" : ""}`,
     `Branch: ${state.branch}`,
@@ -471,7 +516,7 @@ function formatState(state: TaskState): string {
 function compactContext(state: TaskState): string {
   const next = nextItems(state, 3).map((task) => `- ${task.id}: ${task.title}`).join("\n") || "- none";
   const done = state.tasks.filter((task) => task.status === "done").length;
-  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nNext steps:\n${next}\n\nRules:\n- Use /task-run when you want the whole task completed end-to-end.\n- Use /task-next only for a single slice.\n- Do not rewrite spec/plan/tasks during implementation unless the user explicitly asks.\n- Use the taskflow tool or /task-done to mark completed task ids.`;
+  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nMode: ${taskWorkflowModeLabel(state.workflowMode)}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nNext steps:\n${next}\n\nRules:\n- Use /task-run when you want the whole task completed end-to-end.\n- Use /task-next only for a single slice.\n- Do not rewrite spec/plan/tasks during implementation unless the user explicitly asks.\n- Use the taskflow tool or /task-done to mark completed task ids.\n- Normal mode: spec only when the task is big.\n- TDD mode: keep test cases in input -> expect form before code.\n- Grill-me mode: ask short batches until you are confident.`;
 }
 
 function autonomousContext(state: TaskState): string {
@@ -480,10 +525,10 @@ function autonomousContext(state: TaskState): string {
   const worklist = remaining.length
     ? remaining.map((task) => `- ${task.id}: ${task.title} [${task.status}]`).join("\n")
     : "- none";
-  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nRemaining work:\n${worklist}\n\nRules:\n- Execute the task end-to-end, not slice-by-slice.\n- Use ${state.taskDir}/tasks.md as the source of truth.\n- Use the taskflow tool or /task-done to mark each finished task id as you complete it.\n- Keep going until all items are done, then validate and summarize the result.`;
+  return `[TASKFLOW]\nTask #: ${taskNumberFromDir(state.taskDir)}\nName: ${state.name}\nMode: ${taskWorkflowModeLabel(state.workflowMode)}\nDir: ${state.taskDir}\nPhase: ${state.phase}\nPlan approved: ${state.planApproved}\nProgress: ${done}/${state.tasks.length}\nSuggested branch: ${state.branch}\nRemaining work:\n${worklist}\n\nRules:\n- Execute the task end-to-end, not slice-by-slice.\n- Use ${state.taskDir}/tasks.md as the source of truth.\n- Use the taskflow tool or /task-done to mark each finished task id as you complete it.\n- Keep going until all items are done, then validate and summarize the result.\n- Normal mode: spec only when the task is big.\n- TDD mode: keep test cases in input -> expect form before code.\n- Grill-me mode: ask short batches until you are confident.`;
 }
 
-async function createTask(cwd: string, rawName: string): Promise<TaskState> {
+async function createTask(cwd: string, rawName: string, workflowMode: TaskWorkflowMode): Promise<TaskState> {
   const name = rawName.trim();
   if (!name) throw new Error("Task name is required");
 
@@ -497,6 +542,7 @@ async function createTask(cwd: string, rawName: string): Promise<TaskState> {
     taskDir,
     phase: "spec",
     branch: branchNameFromTaskDir(taskDir),
+    workflowMode,
     planApproved: false,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -629,9 +675,10 @@ export default function taskflow(pi: ExtensionAPI) {
     name: "taskflow",
     label: "Taskflow",
     description: "Read or update the current spec-driven task state without loading full task files.",
-    promptSnippet: "Manage compact spec-driven task state plus autonomous end-to-end runs.",
+    promptSnippet: "Manage interactive task intake modes, compact task state, and autonomous end-to-end runs.",
     promptGuidelines: [
       "Use taskflow to read or update task progress instead of rewriting task markdown during implementation.",
+      "Use /task-new as the interactive intake: choose normal, tdd, or grill-me before drafting the spec.",
       "Use taskflow action run for end-to-end execution and taskflow action next only for a single slice.",
       "Use taskflow action approve to generate the plan and task list from the approved spec.",
       "Use taskflow action done after completing one or more stable task ids.",
@@ -680,17 +727,32 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-new", {
-    description: "Create a spec-first task folder (usage: /task-new <feature-or-bug-name>)",
+    description: "Create an interactive task intake flow (usage: /task-new <feature-or-bug-name>)",
     handler: async (args, ctx) => {
       const name = args.trim();
       if (!name) {
         ctx.ui.notify("Usage: /task-new <feature-or-bug-name>", "warning");
         return;
       }
-      const state = await createTask(ctx.cwd, name);
+
+      const modeChoice = await ctx.ui.select("Choose task workflow mode", ["Normal feature", "Test-driven feature", "Grill me"]);
+      if (!modeChoice) {
+        ctx.ui.notify("Task creation cancelled.", "warning");
+        return;
+      }
+
+      const workflowMode: TaskWorkflowMode = modeChoice === "Test-driven feature"
+        ? "tdd"
+        : modeChoice === "Grill me"
+          ? "grill-me"
+          : "normal";
+      const isBigTask = workflowMode === "normal"
+        ? await ctx.ui.confirm("Is this a big task?", "If yes, I’ll ask for a full spec. If no, I’ll keep it lightweight.")
+        : false;
+      const state = await createTask(ctx.cwd, name, workflowMode);
       pi.setSessionName(`${taskNumberFromDir(state.taskDir)} ${state.name}`);
       pi.sendMessage({ customType: "taskflow", content: `Created taskflow task.\n\n${formatState(state)}`, display: true }, { triggerTurn: false });
-      ctx.ui.setEditorText(`Ask me clarifying questions for ${state.name} before drafting the spec. Do not edit files or fill ${state.taskDir}/spec.md yet. Do not create a separate tasks/<name>.md file. After I answer, write only ${state.taskDir}/spec.md. Include a "Validation / tests" section with the checks that prove this works. Plan and tasks will be generated on /task-approve.`);
+      ctx.ui.setEditorText(buildTaskNewPrompt(state, isBigTask));
     },
   });
 
