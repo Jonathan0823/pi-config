@@ -182,30 +182,32 @@ function parseTaskDoneArgs(input: string): ParsedDoneArgs {
   return { ids, note: noteTokens.join(" ").trim() || undefined };
 }
 
-async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState | undefined> {
+async function hydrateFromStateFile(cwd: string, taskDir: string): Promise<TaskState | undefined> {
   const statePath = resolve(cwd, taskDir, STATE_FILE);
-  if (await exists(statePath)) {
-    const loaded = JSON.parse(await readFile(statePath, "utf8")) as Partial<TaskState>;
-    const state: TaskState = {
-      version: loaded.version ?? 1,
-      name: loaded.name ?? inferTaskName(taskDir),
-      taskDir,
-      phase: loaded.phase ?? "spec",
-      branch: loaded.branch ?? branchNameFromTaskDir(taskDir),
-      workflowMode: loaded.workflowMode === "tdd" || loaded.workflowMode === "grill-me" ? loaded.workflowMode : "normal",
-      planApproved: Boolean(loaded.planApproved),
-      createdAt: loaded.createdAt ?? nowIso(),
-      updatedAt: loaded.updatedAt ?? nowIso(),
-      tasks: Array.isArray(loaded.tasks) ? loaded.tasks : [],
-    };
+  if (!(await exists(statePath))) return undefined;
 
-    if (loaded.workflowMode !== state.workflowMode) {
-      await saveState(cwd, state);
-    }
+  const loaded = JSON.parse(await readFile(statePath, "utf8")) as Partial<TaskState>;
+  const state: TaskState = {
+    version: loaded.version ?? 1,
+    name: loaded.name ?? inferTaskName(taskDir),
+    taskDir,
+    phase: loaded.phase ?? "spec",
+    branch: loaded.branch ?? branchNameFromTaskDir(taskDir),
+    workflowMode: loaded.workflowMode === "tdd" || loaded.workflowMode === "grill-me" ? loaded.workflowMode : "normal",
+    planApproved: Boolean(loaded.planApproved),
+    createdAt: loaded.createdAt ?? nowIso(),
+    updatedAt: loaded.updatedAt ?? nowIso(),
+    tasks: Array.isArray(loaded.tasks) ? loaded.tasks : [],
+  };
 
-    return state;
+  if (loaded.workflowMode !== state.workflowMode) {
+    await saveState(cwd, state);
   }
 
+  return state;
+}
+
+async function hydrateFromFileInference(cwd: string, taskDir: string): Promise<TaskState | undefined> {
   if (!(await isTaskDir(cwd, taskDir))) return undefined;
 
   const specPath = resolve(cwd, taskDir, "spec.md");
@@ -237,6 +239,12 @@ async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState
   };
   await saveState(cwd, state);
   return state;
+}
+
+async function hydrateTaskState(cwd: string, taskDir: string): Promise<TaskState | undefined> {
+  const fromFile = await hydrateFromStateFile(cwd, taskDir);
+  if (fromFile) return fromFile;
+  return hydrateFromFileInference(cwd, taskDir);
 }
 
 async function setCurrentTask(cwd: string, taskDir: string): Promise<void> {
@@ -422,6 +430,12 @@ function renderPlanFromSpec(name: string, specText: string): string {
   ].join("\n");
 }
 
+function selectWorkflowItems(testCases: string[], requirements: string[], acceptance: string[], objective: string): string[] {
+  if (testCases.length) return [...testCases, ...requirements];
+  if (requirements.length) return requirements;
+  return acceptance.length ? acceptance : [objective];
+}
+
 function renderTasksFromSpec(name: string, specText: string): string {
   const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
   const requirements = extractListItems(sectionBody(specText, "Requirements"));
@@ -429,7 +443,7 @@ function renderTasksFromSpec(name: string, specText: string): string {
   const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
   const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
   const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
-  const workItems = testCases.length ? [...testCases, ...requirements] : requirements.length ? requirements : acceptance.length ? acceptance : [objective];
+  const workItems = selectWorkflowItems(testCases, requirements, acceptance, objective);
 
   const tasks: string[] = [
     `- [ ] T001 Confirm the approved spec and implementation approach`,
