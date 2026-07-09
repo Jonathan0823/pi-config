@@ -2,7 +2,7 @@
   "theme": "dark",
   "quietStartup": true,
   "enableInstallTelemetry": false,
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "doubleEscapeAction": "tree",
   "treeFilterMode": "default",
   "editorPaddingX": 0,
@@ -15,6 +15,7 @@
     "npm:context-mode",
     "npm:pi-kilocode",
     "git:github.com/DietrichGebert/ponytail",
+    "packages/pi-sonarqube",
     "npm:@juicesharp/rpiv-web-tools"
   ],
   "compaction": {
@@ -28,15 +29,20 @@
   },
   "enableSkillCommands": true,
   "defaultProvider": "opencode",
-  "defaultModel": "mimo-v2.5-free",
+  "defaultModel": "deepseek-v4-flash-free",
   "defaultThinkingLevel": "high",
   "lastChangelogVersion": "0.80.3",
   "enabledModels": [
     "kilocode/kilo-auto/free",
     "openai-codex/gpt-5.4-mini",
-    "github-copilot/gpt-5.4-mini",
     "openai-codex/gpt-5.5",
     "opencode/deepseek-v4-flash-free",
-    "opencode/mimo-v2.5-free"
+    "opencode/mimo-v2.5-free",
+    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-pro",
+    "9router/oc/mimo-v2.5-free",
+    "9router/oc/deepseek-v4-flash-free",
+    "9router/kr/minimax-m2.5-thinking-agentic",
+    "kilocode/nvidia/llama-3.3-nemotron-super-49b-v1.5"
   ]
 }

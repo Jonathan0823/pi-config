@@ -355,13 +355,13 @@ function taskIntakeModeLabel(mode: TaskWorkflowMode): string {
 }
 
 function taskIntakeSummary(name: string, workflowMode: TaskWorkflowMode, clarifications: string[] = []): string {
-  const intro = `I'll brainstorm the ${taskIntakeModeLabel(workflowMode)} spec and plan for this task.`;
+  const intro = `I'll brainstorm the ${taskIntakeModeLabel(workflowMode)} spec for this task.`;
 
   return [
     `Task: ${name}`,
     `Mode: ${taskWorkflowModeLabel(workflowMode)}`,
     intro,
-    "Template spec.md and plan.md were created. We'll discuss and refine the approach, then I'll fill them once you're satisfied.",
+    "Template spec.md and plan.md were created. We'll fill spec.md first, then use /task-plan to refine the plan. Finally /task-approve derives the task list.",
     ...(clarifications.length ? ["", "Approved clarifications:", ...clarifications.map((item) => `- ${item}`)] : []),
   ].join("\n");
 }
@@ -371,14 +371,10 @@ function buildTaskNewPrompt(state: TaskState, clarifications: string[] = []): st
     ? [`Approved clarifications:`, ...clarifications.map((item) => `- ${item}`), ""].join("\n")
     : "";
 
-  const base = `Do NOT write spec.md or plan.md yet. Walk through the approach with the user — ask about the goal, scope, and any edge cases. Once the user is satisfied and says something like "looks good" or "go ahead", write the spec.md from the discussion, then call /task-approve to generate plan.md and tasks.md from it.`;
+  const base = `Spec and plan templates were created in ${state.taskDir}/. Walk through the spec with the user — ask about the goal, scope, and any edge cases. Fill the spec.md from the discussion. When the spec is settled, tell the user to run /task-plan to brainstorm and refine the plan.`;
 
   if (state.workflowMode === "tdd") {
-    return `${noteBlock}${base} For test cases, discuss "Input -> Expect" format so /task-approve can use them.`;
-  }
-
-  if (state.workflowMode === "grill-me") {
-    return `${noteBlock}${base}`;
+    return `${noteBlock}${base} For test cases, discuss "Input -> Expect" format so the plan can reference them.`;
   }
 
   return `${noteBlock}${base}`;
@@ -390,72 +386,6 @@ function planTemplate(name: string): string {
 
 function tasksTemplate(name: string): string {
   return `# ${name} Tasks\n\n> Generated from the approved spec. Use stable task ids and mark progress with \`/task-done T001\` (or bare \`001\`).\n> Format: \`- [ ] T001 [P] Optional parallel marker and task text\`\n\n## Setup\n- [ ] T001 Confirm spec acceptance criteria and implementation plan\n\n## Implementation\n- [ ] T002 Implement the first focused slice\n\n## Validation\n- [ ] T003 Run relevant validation and record results\n`;
-}
-
-function renderPlanFromSpec(name: string, specText: string): string {
-  const objective = extractListItems(sectionBody(specText, "Objective"))[0] ?? `Implement ${name}`;
-  const inScope = extractListItems(subsectionBody(specText, "Scope", "In scope"));
-  const outOfScope = extractListItems(subsectionBody(specText, "Scope", "Out of scope"));
-  const requirements = extractListItems(sectionBody(specText, "Requirements"));
-  const testCases = extractListItems(sectionBody(specText, "Test cases"));
-  const validationTests = extractListItems(sectionBody(specText, "Validation / tests") || sectionBody(specText, "Validation"));
-  const acceptance = extractListItems(sectionBody(specText, "Acceptance criteria"));
-  const openQuestions = extractListItems(sectionBody(specText, "Open questions"));
-
-  const dependencies = openQuestions.length
-    ? openQuestions.map((item) => `- Resolve: ${item}`)
-    : ["- No explicit dependencies listed in the spec."];
-
-  const implementationSteps = [
-    `Review the approved spec and confirm the objective: ${shortenText(objective)}`,
-    requirements.length ? `Implement the listed requirements: ${shortenText(requirements[0])}` : `Implement the in-scope behavior from the spec.`,
-    `Verify the acceptance criteria and keep out-of-scope items untouched.`,
-    `Run the relevant validation and polish any follow-up fixes.`,
-  ];
-
-  let validation: string[];
-  if (validationTests.length) {
-    validation = validationTests.map((item) => `- Validate ${item}`);
-  } else if (acceptance.length) {
-    validation = acceptance.map((item) => `- Confirm ${item}`);
-  } else {
-    validation = ["- Confirm the implementation satisfies the approved spec.", "- Run the relevant lint/type/test checks."];
-  }
-
-  const risks = [
-    ...outOfScope.slice(0, 2).map((item) => `- Avoid pulling in out-of-scope work: ${item}`),
-    ...openQuestions.slice(0, 2).map((item) => `- Resolve or document any open question: ${item}`),
-  ];
-
-  return [
-    `# ${name} Plan`,
-    "",
-    "> Generated from the approved spec. Revise only if the spec changes.",
-    "",
-    "## Approach",
-    `- ${shortenText(objective)}`,
-    ...(inScope.length ? inScope.map((item) => `- In scope: ${item}`) : ["- In scope: implement the approved spec."]),
-    "",
-    "## Dependencies",
-    ...dependencies,
-    "",
-    ...(testCases.length ? ["## Test cases", ...testCases.map((item) => `- ${item}`), ""] : []),
-    "## Implementation strategy",
-    ...implementationSteps.map((step, index) => `${index + 1}. ${step}`),
-    "",
-    "## Validation strategy",
-    ...validation,
-    "",
-    "## Risks",
-    ...(risks.length ? risks : ["- Scope may need refinement if the approved spec is underspecified."]),
-    "",
-  ].join("\n");
-}
-
-function selectWorkflowItems(testCases: string[], requirements: string[], acceptance: string[], objective: string): string[] {
-  if (testCases.length) return [...testCases, ...requirements];
-  if (requirements.length) return requirements;
-  return acceptance.length ? acceptance : [objective];
 }
 
 function renderTasksFromPlan(name: string, planText: string): string {
@@ -607,16 +537,10 @@ async function createTask(cwd: string, rawName: string, workflowMode: TaskWorkfl
 }
 
 async function approveTask(cwd: string, state: TaskState): Promise<TaskState> {
-  const specPath = resolve(cwd, state.taskDir, "spec.md");
   const planPath = resolve(cwd, state.taskDir, "plan.md");
   const tasksPath = resolve(cwd, state.taskDir, "tasks.md");
-  const specText = await readFile(specPath, "utf8");
-  const planText = renderPlanFromSpec(state.name, specText);
+  const planText = await readFile(planPath, "utf8");
   const tasksText = renderTasksFromPlan(state.name, planText);
-
-  await withFileMutationQueue(planPath, async () => {
-    await writeFile(planPath, planText, "utf8");
-  });
 
   await withFileMutationQueue(tasksPath, async () => {
     await writeFile(tasksPath, tasksText, "utf8");
@@ -729,9 +653,10 @@ export default function taskflow(pi: ExtensionAPI) {
     promptSnippet: "Manage interactive task intake modes, compact task state, and autonomous end-to-end runs.",
     promptGuidelines: [
       "Use taskflow to read or update task progress instead of rewriting task markdown during implementation.",
-      "Use /task-new as the interactive intake: creates template spec.md and plan.md, shows the summary, waits for approval then fills them from your clarifications.",
+      "Use /task-new as the interactive intake: creates template spec.md and plan.md, fills spec.md from discussion, then tells the user to run /task-plan.",
+      "Use /task-plan to brainstorm and refine plan.md before approving.",
+      "Use taskflow action approve to derive the task list from the approved plan.",
       "Use taskflow action run for end-to-end execution and taskflow action next only for a single slice.",
-      "Use taskflow action approve to generate the plan from the spec, then derive the task list from the approved plan.",
       "Use taskflow action done after completing one or more stable task ids.",
     ],
     parameters: TaskflowParams,
@@ -741,7 +666,7 @@ export default function taskflow(pi: ExtensionAPI) {
 
       if (params.action === "approve") {
         const approved = await approveTask(ctx.cwd, state);
-        return { content: [{ type: "text", text: `Generated plan from the spec and tasks from the plan.\n\n${formatState(approved)}` }], details: approved };
+        return { content: [{ type: "text", text: `Derived tasks from the approved plan.\n\n${formatState(approved)}` }], details: approved };
       }
 
       if (params.action === "done") {
@@ -863,12 +788,42 @@ export default function taskflow(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("task-approve", {
-    description: "Generate plan from the approved spec, then tasks from the approved plan and enter implementation mode",
+    description: "Derive task list from the approved plan.md and enter implementation mode",
     handler: async (_args, ctx) => {
       const state = await loadState(ctx.cwd);
       if (!state) return ctx.ui.notify("No current taskflow task.", "error");
       const approved = await approveTask(ctx.cwd, state);
-      pi.sendMessage({ customType: "taskflow", content: `Generated plan from the spec and tasks from the plan.\n\n${formatState(approved)}`, display: true }, { triggerTurn: false });
+      pi.sendMessage({ customType: "taskflow", content: `Derived tasks from the approved plan.\n\n${formatState(approved)}`, display: true }, { triggerTurn: false });
+    },
+  });
+
+  pi.registerCommand("task-plan", {
+    description: "Open an interactive plan brainstorming session that writes plan.md",
+    handler: async (_args, ctx) => {
+      const state = await loadState(ctx.cwd);
+      if (!state) return ctx.ui.notify("No current taskflow task.", "error");
+      if (state.planApproved) return ctx.ui.notify("Plan is already approved. Use /task-revise if you need to change it.", "warning");
+
+      state.phase = "plan";
+      await saveState(ctx.cwd, state);
+
+      pi.sendMessage({ customType: "taskflow", content: compactContext(state), display: true }, { triggerTurn: false });
+
+      const planPath = resolve(ctx.cwd, state.taskDir, "plan.md");
+      const existingPlan = (await exists(planPath)) ? await readFile(planPath, "utf8") : planTemplate(state.name);
+
+      const prompt = [
+        `Planning ${state.name}. Current plan.md at ${state.taskDir}/plan.md:`,
+        "",
+        "```",
+        existingPlan.slice(0, 500),
+        existingPlan.length > 500 ? "..." : "",
+        "```",
+        "",
+        "Brainstorm the approach with the user — ask about implementation details, dependencies, validation strategy, and risks. Refine plan.md together. When the plan is settled, run /task-approve to generate tasks from it.",
+      ].join("\n");
+
+      ctx.ui.setEditorText(prompt);
     },
   });
 
