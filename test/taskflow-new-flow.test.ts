@@ -52,7 +52,7 @@ async function setupTask(confirmResponses: boolean[]) {
   const taskDir = taskDirs.find((entry) => entry.isDirectory() && /^\d{3}-/.test(entry.name));
   assert(taskDir, "task directory should be created after approval");
 
-  const taskPath = join(cwd, "tasks", taskDir!.name);
+  const taskPath = join(cwd, "tasks", taskDir.name);
   return { cwd, taskPath, confirmMessages, editorTexts, pi, ctx };
 }
 
@@ -60,16 +60,15 @@ try {
   // --- Phase 1: /task-new creates spec + plan templates ---
   const first = await setupTask([false, false, true]);
   const files = await readdir(first.taskPath);
-  assert(files.includes("state.json"), "state.json should exist");
+  assert(!files.includes("state.json"), "state.json should not exist");
   assert(files.includes("spec.md"), "spec.md should exist after task creation");
   assert(files.includes("plan.md"), "plan.md should exist after task creation");
 
-  const state = JSON.parse(await readFile(join(first.taskPath, "state.json"), "utf8"));
-  assert.equal(state.phase, "spec");
-  assert.equal(state.planApproved, false);
+  const specText0 = await readFile(join(first.taskPath, "spec.md"), "utf8");
+  assert(!specText0.includes("workflowMode"), "no mode marker for normal mode");
 
   assert.equal(first.confirmMessages.length, 3, "declines should loop until approval");
-  assert.match(first.confirmMessages[0], /Template spec\.md and plan\.md were created/i);
+  assert.match(first.confirmMessages[0], /Template spec\.md and plan\.md will be created/i);
   assert.match(first.editorTexts[0], /Fill the spec\.md from the discussion/i);
   assert.match(first.editorTexts[0], /\/task-plan/i);
 
@@ -98,16 +97,12 @@ try {
   await taskApprove.handler("", second.ctx);
 
   const tasksMd = await readFile(join(second.taskPath, "tasks.md"), "utf8");
-  const approvedState = JSON.parse(await readFile(join(second.taskPath, "state.json"), "utf8"));
-
-  assert.equal(approvedState.planApproved, true);
-  assert.equal(approvedState.phase, "implement");
   assert.match(tasksMd, /Generated from the approved plan/i);
   assert.match(tasksMd, /T001 Confirm the approved plan and implementation approach/);
-  assert.match(tasksMd, /T002 Implement plan step: Create the command handler/);
-  assert.match(tasksMd, /T003 Implement plan step: Register it in the extension/);
-  assert.match(tasksMd, /T004 Implement plan step: Test the flow/);
-  assert.match(tasksMd, /T005 Validate: Run the existing taskflow tests/);
+  assert.match(tasksMd, /T003 Implement plan step: Create the command handler/);
+  assert.match(tasksMd, /T004 Implement plan step: Register it in the extension/);
+  assert.match(tasksMd, /T005 Implement plan step: Test the flow/);
+  assert.match(tasksMd, /T006 Validate: Run the existing taskflow tests/);
 
   // Plan.md should NOT have been overwritten by approve
   const planAfter = await readFile(join(second.taskPath, "plan.md"), "utf8");
