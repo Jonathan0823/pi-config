@@ -355,13 +355,13 @@ function taskIntakeModeLabel(mode: TaskWorkflowMode): string {
 }
 
 function taskIntakeSummary(name: string, workflowMode: TaskWorkflowMode, clarifications: string[] = []): string {
-  const intro = `I’ll draft a ${taskIntakeModeLabel(workflowMode)} spec and generic plan.`;
+  const intro = `I'll brainstorm the ${taskIntakeModeLabel(workflowMode)} spec and plan for this task.`;
 
   return [
     `Task: ${name}`,
     `Mode: ${taskWorkflowModeLabel(workflowMode)}`,
     intro,
-    "I will only create spec.md and plan.md after you approve this summary.",
+    "Template spec.md and plan.md were created. We'll discuss and refine the approach, then I'll fill them once you're satisfied.",
     ...(clarifications.length ? ["", "Approved clarifications:", ...clarifications.map((item) => `- ${item}`)] : []),
   ].join("\n");
 }
@@ -371,15 +371,17 @@ function buildTaskNewPrompt(state: TaskState, clarifications: string[] = []): st
     ? [`Approved clarifications:`, ...clarifications.map((item) => `- ${item}`), ""].join("\n")
     : "";
 
+  const base = `Do NOT write spec.md or plan.md yet. Walk through the approach with the user — ask about the goal, scope, and any edge cases. Once the user is satisfied and says something like "looks good" or "go ahead", write the spec.md from the discussion, then call /task-approve to generate plan.md and tasks.md from it.`;
+
   if (state.workflowMode === "tdd") {
-    return `${noteBlock}Draft the spec and fill plan.md from the approved summary for ${state.name}. Carry test cases as "Input -> Expect" so /task-approve can turn the approved plan into tasks. Do not edit tasks yet.`;
+    return `${noteBlock}${base} For test cases, discuss "Input -> Expect" format so /task-approve can use them.`;
   }
 
   if (state.workflowMode === "grill-me") {
-    return `${noteBlock}Draft the spec and fill plan.md from the approved summary for ${state.name}. Keep the wording tight and reflect the approved clarifications. Do not edit tasks yet.`;
+    return `${noteBlock}${base}`;
   }
 
-  return `${noteBlock}This looks like a small task for ${state.name}. Keep the spec lightweight, then fill plan.md from the approved summary. Do not edit tasks yet.`;
+  return `${noteBlock}${base}`;
 }
 
 function planTemplate(name: string): string {
@@ -570,6 +572,16 @@ async function createTask(cwd: string, rawName: string, workflowMode: TaskWorkfl
   const absDir = resolve(cwd, taskDir);
   await mkdir(absDir, { recursive: true });
 
+  // ponytail: write template spec+plan — specTemplate/planTemplate already defined above
+  const absSpec = resolve(absDir, "spec.md");
+  const absPlan = resolve(absDir, "plan.md");
+  if (!(await exists(absSpec))) {
+    await writeFile(absSpec, specTemplate(name), "utf8");
+  }
+  if (!(await exists(absPlan))) {
+    await writeFile(absPlan, planTemplate(name), "utf8");
+  }
+
   const state: TaskState = {
     version: 1,
     name,
@@ -711,7 +723,7 @@ export default function taskflow(pi: ExtensionAPI) {
     promptSnippet: "Manage interactive task intake modes, compact task state, and autonomous end-to-end runs.",
     promptGuidelines: [
       "Use taskflow to read or update task progress instead of rewriting task markdown during implementation.",
-      "Use /task-new as the interactive intake: show the spec/plan summary first, then wait for approval before drafting the spec and plan.",
+      "Use /task-new as the interactive intake: creates template spec.md and plan.md, shows the summary, waits for approval then fills them from your clarifications.",
       "Use taskflow action run for end-to-end execution and taskflow action next only for a single slice.",
       "Use taskflow action approve to generate the plan and task list from the approved spec.",
       "Use taskflow action done after completing one or more stable task ids.",
