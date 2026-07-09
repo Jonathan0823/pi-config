@@ -809,16 +809,8 @@ export default function taskflow(pi: ExtensionAPI) {
 
       pi.sendMessage({ customType: "taskflow", content: compactContext(state), display: true }, { triggerTurn: false });
 
-      const planPath = resolve(ctx.cwd, state.taskDir, "plan.md");
-      const existingPlan = (await exists(planPath)) ? await readFile(planPath, "utf8") : planTemplate(state.name);
-
       const prompt = [
-        `Planning ${state.name}. Current plan.md at ${state.taskDir}/plan.md:`,
-        "",
-        "```",
-        existingPlan.slice(0, 500),
-        existingPlan.length > 500 ? "..." : "",
-        "```",
+        `Planning ${state.name}. The plan.md template is at ${state.taskDir}/plan.md.`,
         "",
         "Brainstorm the approach with the user — ask about implementation details, dependencies, validation strategy, and risks. Refine plan.md together. When the plan is settled, run /task-approve to generate tasks from it.",
       ].join("\n");
