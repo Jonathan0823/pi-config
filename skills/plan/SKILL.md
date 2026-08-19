@@ -20,7 +20,7 @@ Use the full text after `/plan` as the request.
    - check existing patterns, tests, and constraints
    - do not rely on taskflow, task files, or repository-specific planning state
 5. Make sure you can restate the goal and scope confidently before drafting the plan.
-6. Return a plain-text draft plan only.
+6. Return a plain-text draft plan only. Do not WRITE files or make changes. Keep it short, readable, and actionable.
 
 ## Output rules
 
