@@ -16,3 +16,5 @@ cache/
 trust.json
 .pi/
 .scannerwork/
+skills/impeccable/*
+packages/pi-sonarqube
