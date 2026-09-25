@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { getConfig, jiraRequest, loadProjectEnv, run, textToAdf } from "./jira.mjs";
 
@@ -20,7 +22,7 @@ test("loads project .env without overriding existing environment values", () => 
     precedence: process.env.JIRA_TEST_PRECEDENCE,
   };
   try {
-    writeFileSync(join(directory, ".env"), "JIRA_TEST_FILE_ONLY=file\nJIRA_TEST_PRECEDENCE=file\n");
+    writeFileSync(join(directory, ".env"), 'JIRA_TEST_FILE_ONLY="file"\r\nJIRA_TEST_PRECEDENCE="file"\r\n');
     process.env.JIRA_TEST_PRECEDENCE = "shell";
     loadProjectEnv(directory);
     assert.equal(process.env.JIRA_TEST_FILE_ONLY, "file");
@@ -31,6 +33,85 @@ test("loads project .env without overriding existing environment values", () => 
     if (previous.precedence === undefined) delete process.env.JIRA_TEST_PRECEDENCE;
     else process.env.JIRA_TEST_PRECEDENCE = previous.precedence;
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("doctor reports local configuration without credentials or network calls", async (t) => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("doctor must not contact Jira"));
+  const result = await run(["doctor"], ENV);
+  assert.equal(result.envFile, join(process.cwd(), ".env"));
+  assert.equal(typeof result.envFileExists, "boolean");
+  assert.equal(result.project, "ABC");
+  assert.equal(result.configured, true);
+  assert.equal(result.error, null);
+  assert.deepEqual(result.variables, Object.fromEntries(Object.keys(ENV).map((key) => [key, true])));
+  for (const value of [ENV.JIRA_URL, ENV.JIRA_EMAIL, ENV.JIRA_API_TOKEN, getConfig(ENV).authorization]) {
+    assert.equal(JSON.stringify(result).includes(value), false);
+  }
+
+  const missing = await run(["doctor"], {});
+  assert.equal(missing.configured, false);
+  assert.equal(missing.project, null);
+  assert.equal(Object.values(missing.variables).every((value) => value === false), true);
+  assert.match(missing.error, /Missing environment variables: JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN/);
+
+  const invalid = await run(["doctor"], { ...ENV, JIRA_URL: "https://secret-user:secret-password@example.com" });
+  assert.equal(invalid.configured, false);
+  assert.match(invalid.error, /without embedded credentials/);
+  assert.equal(JSON.stringify(invalid).includes("secret-"), false);
+  await assert.rejects(run(["doctor", "unexpected"], {}), /Unexpected argument/);
+});
+
+test("doctor CLI loads quoted CRLF .env from the invocation directory and honors overrides", () => {
+  const directory = mkdtempSync(join(tmpdir(), "jira-doctor-"));
+  try {
+    writeFileSync(join(directory, ".env"), Object.entries(ENV).map(([key, value]) => `${key}="${value}"`).join("\r\n"));
+    const output = execFileSync(process.execPath, [fileURLToPath(new URL("./jira.mjs", import.meta.url)), "doctor"], {
+      cwd: directory,
+      env: { JIRA_PROJECT_KEY: "OVERRIDE" },
+      encoding: "utf8",
+    });
+    const result = JSON.parse(output);
+    assert.equal(result.envFile, join(directory, ".env"));
+    assert.equal(result.envFileExists, true);
+    assert.equal(result.configured, true);
+    assert.equal(result.project, "OVERRIDE");
+    assert.equal(output.includes(ENV.JIRA_API_TOKEN), false);
+    assert.equal(output.includes(ENV.JIRA_EMAIL), false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("times out requests and response bodies without retrying mutations", async (t) => {
+  for (const phase of ["request", "body"]) {
+    await t.test(phase, async (t) => {
+      const controller = new AbortController();
+      t.mock.method(AbortSignal, "timeout", (milliseconds) => {
+        assert.equal(milliseconds, 30_000);
+        return controller.signal;
+      });
+      let calls = 0;
+      const fetchImpl = async (_url, options) => {
+        calls++;
+        assert.equal(options.signal, controller.signal);
+        if (phase === "request") {
+          controller.abort(new DOMException("Timeout", "TimeoutError"));
+          options.signal.throwIfAborted();
+        }
+        return {
+          text: async () => {
+            controller.abort(new DOMException("Timeout", "TimeoutError"));
+            throw new DOMException("Body aborted", "AbortError");
+          },
+        };
+      };
+      await assert.rejects(
+        jiraRequest(getConfig(ENV), "/rest/api/3/issue", { method: "POST", body: "{}" }, fetchImpl),
+        /timed out after 30 seconds.*No automatic retry.*verify server state/,
+      );
+      assert.equal(calls, 1);
+    });
   }
 });
 
@@ -73,21 +154,24 @@ test("sends authentication internally and formats Jira errors", async () => {
   assert.match(received.options.headers.Authorization, /^Basic /);
 });
 
-test("uses enhanced JQL search and creates subtasks with ADF", async (t) => {
+test("uses enhanced JQL search and creates assigned subtasks with ADF and browser URLs", async (t) => {
   const requests = [];
+  const apiResult = { id: "10002", key: "ABC-2", self: "https://example.atlassian.net/rest/api/3/issue/10002" };
   t.mock.method(globalThis, "fetch", async (url, options) => {
     requests.push({ url: String(url), options });
-    return new Response(JSON.stringify({ ok: true }), {
+    return new Response(JSON.stringify(apiResult), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
   });
 
   await run(["search", "--jql", "project = ABC", "--max-results", "5"], ENV);
-  await run([
+  const result = await run([
     "create", "--summary", "Child", "--type", "Sub-task", "--parent", "ABC-1",
-    "--description", "Do the work",
-  ], ENV);
+    "--description", "Do the work", "--account-id", "account",
+  ], { ...ENV, JIRA_URL: `${ENV.JIRA_URL}/` });
+  assert.deepEqual(result, { ...apiResult, url: "https://example.atlassian.net/browse/ABC-2" });
+  assert.equal(requests.length, 2);
 
   assert.equal(requests[0].url, "https://example.atlassian.net/rest/api/3/search/jql");
   assert.deepEqual(JSON.parse(requests[0].options.body), {
@@ -98,6 +182,8 @@ test("uses enhanced JQL search and creates subtasks with ADF", async (t) => {
 
   assert.equal(requests[1].url, "https://example.atlassian.net/rest/api/3/issue");
   const created = JSON.parse(requests[1].options.body).fields;
+  assert.deepEqual(created.project, { key: "ABC" });
+  assert.deepEqual(created.assignee, { accountId: "account" });
   assert.deepEqual(created.parent, { key: "ABC-1" });
   assert.deepEqual(created.issuetype, { name: "Sub-task" });
   assert.equal(created.description.content[0].content[0].text, "Do the work");
@@ -117,6 +203,7 @@ test("dispatches the remaining supported operations", async (t) => {
     [["auth-check"], "/rest/api/3/myself", "GET"],
     [["issue", "ABC-1"], "/rest/api/3/issue/ABC-1", "GET"],
     [["create-meta"], "/rest/api/3/issue/createmeta/ABC/issuetypes", "GET"],
+    [["create-meta", "--type-id", "10003"], "/rest/api/3/issue/createmeta/ABC/issuetypes/10003", "GET"],
     [["issue-types"], "/rest/api/3/issue/createmeta/ABC/issuetypes", "GET"],
     [["assignees", "--query", "Jane"], "/rest/api/3/user/assignable/search", "GET"],
     [["comments", "ABC-1"], "/rest/api/3/issue/ABC-1/comment", "GET"],

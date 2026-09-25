@@ -7,16 +7,19 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 const DEFAULT_ISSUE_FIELDS = "summary,status,assignee,description,issuetype,priority,labels,parent";
+const REQUIRED_ENV = ["JIRA_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"];
+const REQUEST_TIMEOUT_MS = 30_000;
 
 const HELP = `Usage: jira.mjs <command> [options]
 
 Read commands:
+  doctor (local configuration diagnostics; no network or credential values)
   auth-check
   issue KEY [--fields LIST]
   search --jql JQL [--fields LIST] [--max-results N] [--next-page-token TOKEN]
   create-meta [--project KEY] [--type-id ID] [--start-at N] [--max-results N]
   issue-types [--project KEY]
-  assignees (--project KEY | --issue KEY) [--query TEXT] [--max-results N]
+  assignees [--project KEY | --issue KEY] [--query TEXT] [--max-results N]
   comments KEY [--start-at N] [--max-results N]
   transitions KEY [--fields]
   link-types
@@ -32,7 +35,14 @@ Mutation commands (confirm with the user before running):
   link --type NAME --inward KEY --outward KEY [--comment TEXT | --comment-file FILE]
 
 Environment: JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, and optional JIRA_PROJECT_KEY.
-The script loads ./.env from the invocation directory; existing environment values win.`;
+The script loads ./.env from the invocation directory; existing environment values win.
+Project-aware commands default to JIRA_PROJECT_KEY; do not source or manually parse .env.
+create-meta without --type-id lists types; with --type-id it lists creation fields.
+Search needs a restrictive JQL clause, e.g. project = ABC, not just ORDER BY.
+Use --fields summary,status,assignee for concise issue/search responses.
+Create returns the API fields plus a browser URL in "url"; --account-id assigns at creation.
+Requests time out after 30 seconds and are never automatically retried.
+After a failed or timed-out mutation, verify server state before retrying.`;
 
 function fail(message) {
   throw new Error(message);
@@ -45,7 +55,7 @@ export function loadProjectEnv(cwd = process.cwd()) {
 }
 
 export function getConfig(env = process.env) {
-  const missing = ["JIRA_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"].filter((name) => !env[name]);
+  const missing = REQUIRED_ENV.filter((name) => !env[name]);
   if (missing.length) fail(`Missing environment variables: ${missing.join(", ")}`);
 
   let url;
@@ -65,6 +75,27 @@ export function getConfig(env = process.env) {
   };
 }
 
+function doctor(env, args) {
+  const parsed = argsFor(args);
+  if (!parsed) return HELP;
+  noExtraPositionals(parsed.positionals, 0);
+  const envFile = resolve(process.cwd(), ".env");
+  let error = null;
+  try {
+    getConfig(env);
+  } catch (cause) {
+    error = cause.message;
+  }
+  return {
+    envFile,
+    envFileExists: existsSync(envFile),
+    variables: Object.fromEntries([...REQUIRED_ENV, "JIRA_PROJECT_KEY"].map((name) => [name, Boolean(env[name])])),
+    project: env.JIRA_PROJECT_KEY || null,
+    configured: error === null,
+    error,
+  };
+}
+
 function apiError(status, statusText, body) {
   const details = [
     ...(Array.isArray(body?.errorMessages) ? body.errorMessages : []),
@@ -74,16 +105,27 @@ function apiError(status, statusText, body) {
 }
 
 export async function jiraRequest(config, pathname, options = {}, fetchImpl = fetch) {
-  const response = await fetchImpl(new URL(pathname, `${config.baseUrl}/`), {
-    ...options,
-    headers: {
-      Accept: "application/json",
-      Authorization: config.authorization,
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...options.headers,
-    },
-  });
-  const text = await response.text();
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  let response;
+  let text;
+  try {
+    response = await fetchImpl(new URL(pathname, `${config.baseUrl}/`), {
+      ...options,
+      signal,
+      headers: {
+        Accept: "application/json",
+        Authorization: config.authorization,
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...options.headers,
+      },
+    });
+    text = await response.text();
+  } catch (error) {
+    if (signal.aborted && signal.reason?.name === "TimeoutError") {
+      fail("Jira request timed out after 30 seconds. No automatic retry was attempted. For mutations, verify server state before retrying.");
+    }
+    throw error;
+  }
   let body = null;
   if (text) {
     try {
@@ -289,7 +331,8 @@ async function createIssue(config, args) {
     ...(parsed.values["account-id"] ? { assignee: { accountId: parsed.values["account-id"] } } : {}),
     ...(parsed.values.labels ? { labels: commaList(parsed.values.labels) } : {}),
   };
-  return jiraRequest(config, "/rest/api/3/issue", { method: "POST", body: body({ fields }) });
+  const created = await jiraRequest(config, "/rest/api/3/issue", { method: "POST", body: body({ fields }) });
+  return { ...created, url: `${config.baseUrl}/browse/${encodeURIComponent(created.key)}` };
 }
 
 async function editIssue(config, args) {
@@ -394,6 +437,7 @@ const commands = {
 
 export async function run(argv = process.argv.slice(2), env = process.env) {
   if (!argv.length || argv[0] === "help" || argv.includes("--help")) return HELP;
+  if (argv[0] === "doctor") return doctor(env, argv.slice(1));
   const command = commands[argv[0]];
   if (!command) fail(`Unknown command: ${argv[0]}`);
   const config = getConfig(env);
