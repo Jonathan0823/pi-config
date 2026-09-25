@@ -2,7 +2,7 @@
   "theme": "dark",
   "quietStartup": true,
   "enableInstallTelemetry": false,
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "doubleEscapeAction": "tree",
   "treeFilterMode": "default",
   "editorPaddingX": 0,
@@ -16,7 +16,8 @@
     "npm:pi-kilocode",
     "git:github.com/DietrichGebert/ponytail",
     "packages/pi-sonarqube",
-    "npm:@juicesharp/rpiv-web-tools"
+    "npm:@juicesharp/rpiv-web-tools",
+    "npm:@ff-labs/pi-fff"
   ],
   "compaction": {
     "enabled": true,
@@ -28,21 +29,17 @@
     "maxRetries": 3
   },
   "enableSkillCommands": true,
-  "defaultProvider": "opencode",
-  "defaultModel": "deepseek-v4-flash-free",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-6-luna",
   "defaultThinkingLevel": "high",
-  "lastChangelogVersion": "0.80.3",
+  "lastChangelogVersion": "0.87.1",
   "enabledModels": [
     "kilocode/kilo-auto/free",
-    "openai-codex/gpt-5.4-mini",
-    "openai-codex/gpt-5.5",
-    "opencode/deepseek-v4-flash-free",
-    "opencode/mimo-v2.5-free",
-    "deepseek/deepseek-v4-flash",
+    "openai-codex/gpt-6-luna",
+    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-6-astra",
+    "openrouter/deepseek/deepseek-v4-flash-vision-exp",
     "deepseek/deepseek-v4-pro",
-    "9router/oc/mimo-v2.5-free",
-    "9router/oc/deepseek-v4-flash-free",
-    "9router/kr/minimax-m2.5-thinking-agentic",
-    "kilocode/nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    "opencode/muse-spark-1.3-contributor-free"
   ]
 }
