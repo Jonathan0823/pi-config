@@ -11,6 +11,22 @@ const dangerousBash = [
   /\bmkfs\./i,
 ];
 
+const sqlCli = /\b(?:sqlite3|psql|mysql|mariadb|sqlcmd|duckdb|sql|sqlit)\b/i;
+const sqlCommandArg = /(?:-c|-e|-Q|--execute|--command|--query(?:=|\s+))\s*(?:"([^"]*)"|'([^']*)'|(\S+))/i;
+const sqliteSqlArg = /\bsqlite3\b(?:\s+\S+)?\s+(?:"([^"]*)"|'([^']*)')/i;
+const sqlitQueryArg = /\bsqlit\b[\s\S]*?\bquery\b[\s\S]*?(?:--query|-q)\s+(?:"([^"]*)"|'([^']*)')/i;
+
+export function isReadOnlySqlCommand(command: string) {
+  if (!sqlCli.test(command)) return false;
+
+  const match = /\bsqlit\b/i.test(command)
+    ? command.match(sqlitQueryArg)
+    : command.match(sqlCommandArg) ?? command.match(sqliteSqlArg);
+  const sql = match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
+  const statements = sql.split(";").map((statement) => statement.trim()).filter(Boolean);
+  return statements.length > 0 && statements.every((statement) => /^SELECT\b/i.test(statement));
+}
+
 const sensitivePaths = [
   ".env",
   ".secrets/",
@@ -30,8 +46,10 @@ async function confirmOrBlock(ctx: any, title: string, message: string) {
 async function handleBashCall(event: any, ctx: any) {
   const rawCmd = (event.input as { command?: unknown }).command;
   const command = typeof rawCmd === "string" ? rawCmd : "";
-  if (dangerousBash.some((pattern) => pattern.test(command))) {
-    const ok = await confirmOrBlock(ctx, "Risky command", `Allow this bash command?
+  const riskySql = sqlCli.test(command) && !isReadOnlySqlCommand(command);
+  if (riskySql || dangerousBash.some((pattern) => pattern.test(command))) {
+    const title = riskySql ? "Risky SQL command" : "Risky command";
+    const ok = await confirmOrBlock(ctx, title, `Allow this bash command?
 
 ${command}`);
     if (!ok) return { block: true, reason: "Blocked risky bash command" };
