@@ -35,11 +35,10 @@
   "lastChangelogVersion": "0.99.1",
   "enabledModels": [
     "kilocode/kilo-auto/free",
-    "openai-codex/gpt-6-luna",
-    "openai-codex/gpt-6-sol",
-    "openai-codex/gpt-6-astra",
-    "openrouter/deepseek/deepseek-v4-flash-vision-exp",
+    "openai-codex/gpt-5.5",
+    "kilocode/deepseek/deepseek-v4-flash",
     "deepseek/deepseek-v4-pro",
-    "opencode/muse-spark-1.3-contributor-free"
+    "openai-codex/gpt-6-luna",
+    "openai-codex/gpt-6.1-sol"
   ]
 }
