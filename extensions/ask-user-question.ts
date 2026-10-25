@@ -218,6 +218,17 @@ async function askSingleChoice(
 		let cachedLines: string[] | undefined;
 		let cachedWidth = -1;
 		const editor = new Editor(tui, createEditorTheme(theme));
+		let voiceTargetActive = true;
+		const removeVoiceTarget = pi.events.on("pi-voice:capture", (event: unknown) => {
+			if (!voiceTargetActive || typeof event !== "object" || event === null || !("setTarget" in event)) return;
+			const setTarget = (event as { setTarget?: unknown }).setTarget;
+			if (typeof setTarget === "function") setTarget((text: string) => {
+				if (!voiceTargetActive || !editMode) return false;
+				editor.insertTextAtCursor(text);
+				refresh();
+				return true;
+			});
+		});
 
 		editor.onSubmit = (value) => {
 			const trimmed = value.trim();
@@ -329,6 +340,10 @@ async function askSingleChoice(
 				cachedLines = undefined;
 			},
 			handleInput,
+			dispose: () => {
+				voiceTargetActive = false;
+				removeVoiceTarget();
+			},
 		};
 	});
 }
@@ -359,6 +374,17 @@ async function askMultiChoice(
 		let cachedWidth = -1;
 		const selected = new Map<string, AskAnswer>();
 		const editor = new Editor(tui, createEditorTheme(theme));
+		let voiceTargetActive = true;
+		const removeVoiceTarget = pi.events.on("pi-voice:capture", (event: unknown) => {
+			if (!voiceTargetActive || typeof event !== "object" || event === null || !("setTarget" in event)) return;
+			const setTarget = (event as { setTarget?: unknown }).setTarget;
+			if (typeof setTarget === "function") setTarget((text: string) => {
+				if (!voiceTargetActive || !editMode) return false;
+				editor.insertTextAtCursor(text);
+				refresh();
+				return true;
+			});
+		});
 
 		editor.onSubmit = (value) => {
 			const trimmed = value.trim();
@@ -534,6 +560,10 @@ async function askMultiChoice(
 				cachedLines = undefined;
 			},
 			handleInput,
+			dispose: () => {
+				voiceTargetActive = false;
+				removeVoiceTarget();
+			},
 		};
 	});
 }

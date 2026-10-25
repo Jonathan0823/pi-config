@@ -16,6 +16,7 @@
     "npm:pi-kilocode",
     "git:github.com/DietrichGebert/ponytail",
     "packages/pi-sonarqube",
+    "git:github.com/Jonathan0823/pi-voice",
     "npm:@juicesharp/rpiv-web-tools",
     "npm:@ff-labs/pi-fff"
   ],
