@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { ExtensionEditorComponent, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
 	Editor,
 	type EditorTheme,
@@ -200,7 +200,34 @@ function buildResult(question: string, context: string | undefined, mode: AskUse
 	};
 }
 
+async function askText(pi: ExtensionAPI, ctx: any, title: string): Promise<string | undefined> {
+	if (ctx.mode !== "tui") return ctx.ui.editor(title);
+
+	return ctx.ui.custom<string | undefined>((tui: any, _theme: any, keybindings: any, done: (value: string | undefined) => void) => {
+		let active = true;
+		const editor = new ExtensionEditorComponent(tui, keybindings, title, undefined, done, () => done(undefined));
+		const removeVoiceTarget = pi.events.on("pi-voice:capture", (event: unknown) => {
+			if (!active || typeof event !== "object" || event === null || !("setTarget" in event)) return;
+			const setTarget = (event as { setTarget?: unknown }).setTarget;
+			if (typeof setTarget !== "function") return;
+			setTarget((text: string) => {
+				if (!active || !text.trim()) return false;
+				editor.handleInput(`\x1b[200~${text}\x1b[201~`);
+				tui.requestRender();
+				return true;
+			});
+		});
+		return Object.assign(editor, {
+			dispose: () => {
+				active = false;
+				removeVoiceTarget();
+			},
+		});
+	});
+}
+
 async function askSingleChoice(
+	pi: ExtensionAPI,
 	ctx: any,
 	question: string,
 	context: string | undefined,
@@ -222,7 +249,13 @@ async function askSingleChoice(
 		const removeVoiceTarget = pi.events.on("pi-voice:capture", (event: unknown) => {
 			if (!voiceTargetActive || typeof event !== "object" || event === null || !("setTarget" in event)) return;
 			const setTarget = (event as { setTarget?: unknown }).setTarget;
-			if (typeof setTarget === "function") setTarget((text: string) => {
+			if (typeof setTarget !== "function") return;
+			if (!editMode) {
+				editMode = true;
+				editor.setText("");
+				refresh();
+			}
+			setTarget((text: string) => {
 				if (!voiceTargetActive || !editMode) return false;
 				editor.insertTextAtCursor(text);
 				refresh();
@@ -349,6 +382,7 @@ async function askSingleChoice(
 }
 
 async function askMultiChoice(
+	pi: ExtensionAPI,
 	ctx: any,
 	question: string,
 	context: string | undefined,
@@ -378,7 +412,13 @@ async function askMultiChoice(
 		const removeVoiceTarget = pi.events.on("pi-voice:capture", (event: unknown) => {
 			if (!voiceTargetActive || typeof event !== "object" || event === null || !("setTarget" in event)) return;
 			const setTarget = (event as { setTarget?: unknown }).setTarget;
-			if (typeof setTarget === "function") setTarget((text: string) => {
+			if (typeof setTarget !== "function") return;
+			if (!editMode) {
+				editMode = true;
+				editor.setText(selected.get("other")?.label || "");
+				refresh();
+			}
+			setTarget((text: string) => {
 				if (!voiceTargetActive || !editMode) return false;
 				editor.insertTextAtCursor(text);
 				refresh();
@@ -630,7 +670,7 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 			return withUILock(async () => {
 				if (mode === "text") {
 					const editorTitle = context ? `${params.question}\n\n${context}` : params.question;
-					const answer = await ctx.ui.editor(editorTitle);
+					const answer = await askText(pi, ctx, editorTitle);
 					if (answer === undefined) {
 						return cancelledResult(params.question, mode, context);
 					}
@@ -640,14 +680,14 @@ export default function askUserQuestion(pi: ExtensionAPI) {
 				}
 
 				if (mode === "single-select") {
-					const answer = await askSingleChoice(ctx, params.question, context, options);
+					const answer = await askSingleChoice(pi, ctx, params.question, context, options);
 					if (!answer) {
 						return cancelledResult(params.question, mode, context);
 					}
 					return buildResult(params.question, context, mode, [answer]);
 				}
 
-				const answers = await askMultiChoice(ctx, params.question, context, options);
+				const answers = await askMultiChoice(pi, ctx, params.question, context, options);
 				if (!answers) {
 					return cancelledResult(params.question, mode, context);
 				}
