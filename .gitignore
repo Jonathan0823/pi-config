@@ -18,3 +18,10 @@ trust.json
 .scannerwork/
 skills/impeccable/*
 packages/pi-sonarqube
+fff/
+install
+**/.profile
+extensions/atuin.ts
+git/
+packages/
+
