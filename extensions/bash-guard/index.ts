@@ -453,15 +453,14 @@ export default function (pi: ExtensionAPI) {
 	pi.registerFlag("bash-guard-disabled", {
 		description: "Start the session with bash-guard disabled (autonomous mode; hard-block floor still applies).",
 		type: "boolean",
-		default: false,
+		default: true,
 	});
 
 	// Session-local toggle. Intentionally not persisted across reloads or restarts.
-	let disabled = false;
+	let disabled = pi.getFlag("bash-guard-disabled") === true;
 
-	pi.on("session_start", async (event, ctx) => {
-		if (event.reason === "startup" && pi.getFlag("--bash-guard-disabled") === true) {
-			disabled = true;
+	pi.on("session_start", async (_event, ctx) => {
+		if (disabled) {
 			const { theme } = ctx.ui;
 			const badge = theme.bg(
 				"toolErrorBg",
@@ -472,7 +471,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("bash-guard", {
-		description: "Toggle bash-guard between interactive (default) and disabled (autonomous) for this session.",
+		description: "Toggle bash-guard between interactive and disabled (autonomous) modes for this session.",
 		handler: async (_args, ctx) => {
 			disabled = !disabled;
 			if (disabled) {
@@ -532,7 +531,7 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		if (!ctx.hasUI && pi.getFlag("--bash-guard-auto-allow")) {
+		if (!ctx.hasUI && pi.getFlag("bash-guard-auto-allow")) {
 			// Non-interactive mode: allow when explicitly requested.
 			return;
 		}

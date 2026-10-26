@@ -8,9 +8,11 @@ the session is interactive (main session) or non-interactive (spawned subagent).
 Behaviour is determined at registration time via the `PI_SUBAGENT_DEPTH` environment variable,
 which pi-subagents injects into every spawned process.
 
-### Main session (`PI_SUBAGENT_DEPTH` = 0 or unset) — interactive prompt
+### Main session (`PI_SUBAGENT_DEPTH` = 0 or unset) — disabled by default
 
-- Heuristically detects destructive/questionable commands via shell-aware parsing
+- Starts with interactive prompting disabled; catastrophic operations remain hard-blocked
+- Run `/bash-guard` to enable interactive prompts for the session
+- When enabled, heuristically detects destructive/questionable commands via shell-aware parsing
 - Prompts for **any** `git ...` command (escalates severity for especially risky ones: `git rm`,
   `git reset --hard`, `git clean -fdx`, `git push --force`, `git reflog expire`, `git gc --prune`)
 - Prompts for disk/volume tooling: `diskutil`, `hdiutil`, `mkfs*`, `newfs_*`, `wipefs`, `parted`,
