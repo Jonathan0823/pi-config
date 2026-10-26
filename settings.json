@@ -1,6 +1,6 @@
 {
   "theme": "dark",
-  "quietStartup": true,
+  "quietStartup": "header",
   "enableInstallTelemetry": false,
   "hideThinkingBlock": true,
   "doubleEscapeAction": "tree",
@@ -18,7 +18,8 @@
     "packages/pi-sonarqube",
     "git:github.com/Jonathan0823/pi-voice",
     "npm:@juicesharp/rpiv-web-tools",
-    "npm:@ff-labs/pi-fff"
+    "npm:@ff-labs/pi-fff",
+    "git:github.com/Jonathan0823/pi-voice"
   ],
   "compaction": {
     "enabled": true,
@@ -33,13 +34,20 @@
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6-luna",
   "defaultThinkingLevel": "high",
-  "lastChangelogVersion": "0.99.1",
+  "lastChangelogVersion": "1.4.0",
   "enabledModels": [
     "kilocode/kilo-auto/free",
-    "openai-codex/gpt-5.5",
-    "kilocode/deepseek/deepseek-v4-flash",
-    "deepseek/deepseek-v4-pro",
     "openai-codex/gpt-6-luna",
-    "openai-codex/gpt-6.1-sol"
-  ]
+    "openai-codex/gpt-6-sol",
+    "openai-codex/gpt-6.1-sol",
+    "openrouter/deepseek/deepseek-v4-flash-vision-exp",
+    "deepseek/deepseek-v4-pro",
+    "auto-model/auto",
+    "openrouter/inclusionai/ling-3.0-flash-sante:free"
+  ],
+  "tuiMode": "regular",
+  "markdown": {
+    "mermaid": "streaming"
+  }
 }
+
