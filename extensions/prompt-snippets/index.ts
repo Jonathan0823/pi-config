@@ -126,6 +126,7 @@ export default function (pi: ExtensionAPI) {
 		// Working copy; only committed to `enabled` on confirm.
 		const working = new Set(enabled);
 
+		// Inline custom UIs restore visible text with setText, which discards hidden long-paste contents.
 		const confirmed = await ctx.ui.custom<boolean>((tui, theme, _keybindings, done) => {
 			const prepends = snippets.filter((s) => s.placement === "prepend");
 			const appends = snippets.filter((s) => s.placement === "append");
@@ -276,6 +277,9 @@ export default function (pi: ExtensionAPI) {
 					}
 				},
 			};
+		}, {
+			overlay: true,
+			overlayOptions: { width: "100%" },
 		});
 
 		if (confirmed) {

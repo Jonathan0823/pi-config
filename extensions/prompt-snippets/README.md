@@ -6,7 +6,8 @@ standalone instruction — toggle exactly the ones you want per message.
 
 ## Usage
 
-- Press **alt+s** or run **/snippets** to open the toggle menu.
+- Press **alt+s** or run **/snippets** to open the toggle menu as a full-width
+  overlay, preserving long text pasted into the editor.
   - `up`/`down` to navigate, `space` to toggle, `enter` to apply, `esc` to cancel.
   - `tab` previews the highlighted snippet (name, placement, order, filename,
     and full body; `up`/`down` scroll long bodies). `tab` or `esc` returns to
