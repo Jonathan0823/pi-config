@@ -2,6 +2,7 @@
   "theme": "dark",
   "quietStartup": "header",
   "enableInstallTelemetry": false,
+  "defaultTools": ["+codemode"],
   "hideThinkingBlock": true,
   "doubleEscapeAction": "tree",
   "treeFilterMode": "default",
