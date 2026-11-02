@@ -4,7 +4,7 @@ description: General-purpose worker — reads, writes, and edits code
 tools: read, write, edit, bash, ffgrep, fffind, codemode
 extensions: builtin:codemode
 subagentOnlyExtensions:
-  - /home/ejo4358/.pi/agent/npm/node_modules/@ff-labs/pi-fff/src/index.ts
+  - ~/.pi/agent/npm/node_modules/@ff-labs/pi-fff/src/index.ts
 subagent_agents: scout, researcher
 model: openai-codex/gpt-6-luna
 fallback-model: pi-default

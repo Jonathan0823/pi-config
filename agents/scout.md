@@ -4,7 +4,7 @@ description: Fast codebase recon — explores files, finds patterns, maps archit
 tools: read, grep, find, ls, ffgrep, fffind, codemode
 extensions: builtin:codemode
 subagentOnlyExtensions:
-  - /home/ejo4358/.pi/agent/npm/node_modules/@ff-labs/pi-fff/src/index.ts
+  - ~/.pi/agent/npm/node_modules/@ff-labs/pi-fff/src/index.ts
 model: openai-codex/gpt-6-luna
 fallback-model: pi-default
 thinking: low

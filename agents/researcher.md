@@ -4,7 +4,7 @@ description: Web researcher — searches the web and synthesizes findings
 tools: web_search, web_fetch
 extensions:
 subagentOnlyExtensions:
-  - /home/ejo4358/.pi/agent/npm/node_modules/@juicesharp/rpiv-web-tools/index.ts
+  - ~/.pi/agent/npm/node_modules/@juicesharp/rpiv-web-tools/index.ts
 model: openai-codex/gpt-6-luna
 fallback-model: pi-default
 thinking: medium
