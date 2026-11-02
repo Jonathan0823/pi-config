@@ -1,10 +1,11 @@
 ---
 name: researcher
 description: Web researcher — searches the web and synthesizes findings
-tools: web_search, web_fetch
-extensions:
+tools: read, write, edit, web_search, web_fetch, ffgrep, fffind, codemode
+extensions: builtin:codemode
 subagentOnlyExtensions:
   - ~/.pi/agent/npm/node_modules/@juicesharp/rpiv-web-tools/index.ts
+  - ~/.pi/agent/npm/node_modules/@ff-labs/pi-fff/src/index.ts
 model: openai-codex/gpt-6-luna
 fallback-model: pi-default
 thinking: medium
