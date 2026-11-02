@@ -1,7 +1,7 @@
 ---
 name: scout
 description: Fast codebase recon — explores files, finds patterns, maps architecture
-tools: read, grep, find, ls, ffgrep, fffind, codemode
+tools: read, ffgrep, fffind, ls, codemode
 extensions: builtin:codemode
 subagentOnlyExtensions:
   - ~/.pi/agent/npm/node_modules/@ff-labs/pi-fff/src/index.ts
